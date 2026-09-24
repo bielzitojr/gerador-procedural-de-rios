@@ -1,0 +1,6 @@
+{
+  "name": "Gerador Procedural de Rios",
+  "description": "Gerador procedural de rios em 3D com shader de água estilizada toon idêntica à referência.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

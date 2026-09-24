@@ -182,12 +182,30 @@ struct DepthInfo {
 
 DepthInfo get_depth_info(vec2 screen_uv, mat4 inv_proj_mat, mat4 inv_view_mat, float water_view_z) {
   DepthInfo info;
+  info.isSky = true;
+  info.isInFront = false;
+  info.eyeWaterDepth = 0.0;
+  info.worldPos = vec4(0.0);
+
+  if (screen_uv.x < 0.001 || screen_uv.x > 0.999 || screen_uv.y < 0.001 || screen_uv.y > 0.999) {
+    return info;
+  }
+
   float raw_depth = texture2D(uDepthTexture, screen_uv).r;
-  info.isSky = (raw_depth >= 0.9999);
+  // If depth is sky or invalid clear value
+  if (raw_depth >= 0.9999 || raw_depth <= 0.0001) {
+    info.isSky = true;
+    return info;
+  }
+  info.isSky = false;
 
   vec4 clip_pos = vec4(screen_uv * 2.0 - 1.0, raw_depth * 2.0 - 1.0, 1.0);
   vec4 view_pos = inv_proj_mat * clip_pos;
-  view_pos /= max(0.00001, view_pos.w);
+  if (abs(view_pos.w) < 0.00001) {
+    info.isSky = true;
+    return info;
+  }
+  view_pos /= view_pos.w;
 
   info.worldPos = inv_view_mat * view_pos;
 
@@ -198,7 +216,7 @@ DepthInfo get_depth_info(vec2 screen_uv, mat4 inv_proj_mat, mat4 inv_view_mat, f
 }
 
 void main() {
-  vec2 screen_uv = gl_FragCoord.xy / uResolution;
+  vec2 screen_uv = clamp(gl_FragCoord.xy / max(vec2(1.0), uResolution), vec2(0.001), vec2(0.999));
   float water_view_z = vViewPosition.z;
 
   float wave = sample_wave(uWaveTexture, vWorldPosition.xz, uWaveVelocity, uWaveSoftness).r;
@@ -235,7 +253,7 @@ void main() {
   // 2. Optical Refraction Distortion
   vec2 wakeDistortion = vec2(ripplePerturb.x, ripplePerturb.z) * 0.04;
   vec2 waveDistortion = vec2(waveNormalMap.x, waveNormalMap.y) * 0.012;
-  vec2 refracted_uv = screen_uv + (waveDistortion + wakeDistortion) * uRefractionAmount;
+  vec2 refracted_uv = clamp(screen_uv + (waveDistortion + wakeDistortion) * uRefractionAmount, vec2(0.001), vec2(0.999));
 
   // Reconstruct depth safely
   DepthInfo dinfo = get_depth_info(screen_uv, uInvProjectionMatrix, uInvViewMatrix, water_view_z);
@@ -251,27 +269,32 @@ void main() {
   vec4 screenSample = texture2D(uScreenTexture, refracted_uv);
 
   // 3. Physical Water Depth & Godot Depth Gradient
-  float depth = 0.5;
+  float depth = 0.6;
   if (!dinfo.isSky && !dinfo.isInFront) {
     float vert_depth = max(0.0, vWorldPosition.y - dinfo.worldPos.y);
     depth = pow(clamp(vert_depth / max(0.01, uDepthSize), 0.0, 1.0), 3.0);
   }
 
-  // 4. Robust Contact Edge Foam (completamente imune a ângulo/rotação de câmera)
-  float edge_foam = 0.0;
-  if (!dinfo.isSky && !dinfo.isInFront) {
+  // 4. Robust Contact Edge Foam (Multi-device rock & river bank foam)
+  // Procedural bank foam along river ribbon edges (vUv.x is 0 at left bank, 1 at right bank)
+  float bankDist = min(vUv.x, 1.0 - vUv.x);
+  float bankFoamThreshold = clamp(uEdgeFoamDepthSize * 0.16, 0.02, 0.22);
+  float bankFoam = smoothstep(bankFoamThreshold, 0.0, bankDist);
+
+  // Contact foam around submerged rocks via depth buffer
+  float depthEdgeFoam = 0.0;
+  if (!dinfo.isSky && !dinfo.isInFront && dinfo.worldPos.y <= vWorldPosition.y + 0.1) {
     float eye_depth = max(0.0, dinfo.eyeWaterDepth);
     float vert_depth = max(0.0, vWorldPosition.y - dinfo.worldPos.y);
-    
-    // Distância métrica estável até a margem do rio em metros reais
-    float shore_dist = min(eye_depth, vert_depth * 2.2);
+    float shore_dist = min(eye_depth, vert_depth * 2.0);
     float maxFoamDist = max(0.05, uEdgeFoamDepthSize);
     
-    if (shore_dist < maxFoamDist) {
-      edge_foam = clamp(1.0 - (shore_dist / maxFoamDist), 0.0, 1.0);
-      edge_foam = smoothstep(0.08, 0.95, edge_foam);
+    if (shore_dist < maxFoamDist && shore_dist >= 0.001) {
+      depthEdgeFoam = clamp(1.0 - (shore_dist / maxFoamDist), 0.0, 1.0);
+      depthEdgeFoam = smoothstep(0.08, 0.95, depthEdgeFoam);
     }
   }
+  float edge_foam = max(bankFoam, depthEdgeFoam);
 
   // 5. Correnteza Dinâmica Visível (Filamentos de fluxo rápido descendo o rio)
   float flowSpeedFactor = uFlowSpeed * max(0.35, uCurrentStrength);
@@ -303,18 +326,19 @@ void main() {
   // Se for borda de contato (edge_foam), manter visibilidade limpa e definida
   foam = max(foam, edge_foam * 0.85);
 
-  // 6. Stylized Toon Water Base Color & Crystalline Optical Transmission
+  // 6. Stylized Toon Water Base Color (Always vibrant cyan/blue toon water across all devices)
   vec3 flat_color = mix(uDepthColor, uSurfaceColor, depth).rgb;
 
-  vec3 waterTint = mix(uDepthColor, uSurfaceColor, 0.68);
-  vec3 tintedBottom = screenSample.rgb * (waterTint * 1.30 + vec3(0.24, 0.36, 0.40));
+  // Riverbed optical transmission subtly blended
+  vec3 waterTint = mix(uDepthColor, uSurfaceColor, 0.65);
+  vec3 tintedBottom = screenSample.rgb * (waterTint * 1.25 + vec3(0.18, 0.28, 0.32));
   
-  // Crystal clarity transmission
-  float clarity = clamp(0.62 + 0.24 * depth, 0.58, 0.85);
-  vec3 color = mix(flat_color, tintedBottom, clarity);
+  // Safe bottom blend: Only where underwater terrain is actually valid, never on sky/errors
+  float bottomBlend = (!dinfo.isSky && !dinfo.isInFront) ? clamp(0.30 * (1.0 - depth), 0.0, 0.35) : 0.0;
+  vec3 color = mix(flat_color, tintedBottom, bottomBlend);
 
   // Realce das cristas e filamentos velozes da correnteza
-  color = mix(color, uSurfaceColor * 1.15, wave * uWaveHighlight * 0.6 + visibleCurrent * 0.25);
+  color = mix(color, uSurfaceColor * 1.15, wave * uWaveHighlight * 0.45 + visibleCurrent * 0.25);
   color = mix(color, uFoamColor, foam);
 
   // 6. Stylized Toon Cel-Shaded Lighting (Dynamic sun/moon light from day/night cycle)

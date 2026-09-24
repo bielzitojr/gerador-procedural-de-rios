@@ -41,12 +41,14 @@ export class NPCWithTorch {
   private previousPosition = new THREE.Vector3();
   private npcVelocity = new THREE.Vector3();
 
-  // Rota e navegação
-  private pathPoints: THREE.Vector3[] = [];
+  // Rota e navegação contínua por spline (sem travamentos ou teleportes)
+  private pathCurve: THREE.CatmullRomCurve3 | null = null;
+  private pathLength = 0;
   private pathProgress = 0;
   private walkSpeed = 2.4;
   private isIdle = false;
   private idleTimer = 0;
+  private pauseTimer = 22.0;
   private walkCycleTime = 0;
   private getTerrainHeightFn: ((x: number, z: number) => number) | null = null;
 
@@ -229,7 +231,6 @@ export class NPCWithTorch {
     this.torchHandle.add(this.flameOuter);
 
     // 3. Luz Dinâmica Real da Tocha (PointLight)
-    // Cor quente de fogo (#ff8033), atenuação física com decay = 2
     this.torchLight = new THREE.PointLight(0xff7722, 2.5, 26, 2.0);
     this.torchLight.position.set(0, 0.65, 0);
     this.torchLight.castShadow = true;
@@ -261,7 +262,6 @@ export class NPCWithTorch {
     this.emberPoints = new THREE.Points(this.emberGeo, emberMat);
     this.group.add(this.emberPoints);
 
-    // Inicialização da lista de partículas
     for (let i = 0; i < this.maxEmbers; i++) {
       this.embers.push({
         position: new THREE.Vector3(0, -999, 0),
@@ -273,12 +273,12 @@ export class NPCWithTorch {
       });
     }
 
-    // Inicializa a rota padrão ao longo da margem
     this.setupDefaultPath();
   }
 
   /**
-   * Define pontos de patrulha naturais ao longo das margens do rio
+   * Gera uma trilha fechada suave (spline contínuo) ao longo das margens do rio.
+   * Evita saltos discretos, interpolações quebradas ou reversões bruscas.
    */
   public setupPath(
     curve: THREE.CatmullRomCurve3,
@@ -288,54 +288,99 @@ export class NPCWithTorch {
     if (getTerrainHeight) {
       this.getTerrainHeightFn = getTerrainHeight;
     }
-    this.pathPoints = [];
-    // Gera um caminho contínuo na margem do rio sobre terreno seguro e firme
-    const steps = 36;
-    const lateralDist = riverWidth * 0.5 + 2.5;
 
+    const trailPoints: THREE.Vector3[] = [];
+    const steps = 30;
+    const innerDist = riverWidth * 0.5 + 2.3;
+    const outerDist = riverWidth * 0.5 + 4.4;
+
+    // 1. Caminho de ida margeando o rio (t = 0.08 até 0.90)
     for (let i = 0; i <= steps; i++) {
-      const t = 0.08 + (i / steps) * 0.84;
+      const u = i / steps;
+      const t = 0.08 + u * 0.82;
       const center = curve.getPoint(t);
       const tangent = curve.getTangent(t).normalize();
       const side = new THREE.Vector3(-tangent.z, 0, tangent.x).normalize();
-
-      // Alterna levemente para dar naturalidade à caminhada
-      const wobble = Math.sin(i * 1.3) * 0.6;
-      const pt = center.clone().add(side.multiplyScalar(lateralDist + wobble));
-      // Altura exata do terreno no ponto
+      const wobble = Math.sin(u * Math.PI * 4.0) * 0.35;
+      const pt = center.clone().add(side.multiplyScalar(innerDist + wobble));
       if (this.getTerrainHeightFn) {
         pt.y = this.getTerrainHeightFn(pt.x, pt.z);
       } else {
         pt.y = center.y + 1.2;
       }
-      this.pathPoints.push(pt);
+      trailPoints.push(pt);
     }
 
-    // Volta pelo outro lado da trilha formando um circuito contínuo
-    for (let i = steps - 1; i >= 1; i--) {
-      const t = 0.08 + (i / steps) * 0.84;
+    // 2. Curva suave de retorno no extremo final (U-turn arredondado)
+    const farCenter = curve.getPoint(0.90);
+    const farTangent = curve.getTangent(0.90).normalize();
+    const farSide = new THREE.Vector3(-farTangent.z, 0, farTangent.x).normalize();
+    const arcSteps = 4;
+    for (let i = 1; i <= arcSteps; i++) {
+      const frac = i / (arcSteps + 1);
+      const angle = frac * Math.PI;
+      const dist = THREE.MathUtils.lerp(innerDist, outerDist, frac) + Math.sin(angle) * 0.6;
+      const fwd = Math.cos(angle) * -0.6;
+      const pt = farCenter.clone()
+        .add(farSide.clone().multiplyScalar(dist))
+        .add(farTangent.clone().multiplyScalar(fwd));
+      if (this.getTerrainHeightFn) {
+        pt.y = this.getTerrainHeightFn(pt.x, pt.z);
+      }
+      trailPoints.push(pt);
+    }
+
+    // 3. Caminho de volta pelo campo aberto mais afastado (t = 0.90 até 0.08)
+    for (let i = 0; i <= steps; i++) {
+      const u = i / steps;
+      const t = 0.90 - u * 0.82;
       const center = curve.getPoint(t);
       const tangent = curve.getTangent(t).normalize();
       const side = new THREE.Vector3(-tangent.z, 0, tangent.x).normalize();
-
-      const pt = center.clone().add(side.multiplyScalar(lateralDist + 3.2));
+      const wobble = Math.cos(u * Math.PI * 3.5) * 0.4;
+      const pt = center.clone().add(side.multiplyScalar(outerDist + wobble));
       if (this.getTerrainHeightFn) {
         pt.y = this.getTerrainHeightFn(pt.x, pt.z);
       } else {
         pt.y = center.y + 1.3;
       }
-      this.pathPoints.push(pt);
+      trailPoints.push(pt);
     }
 
-    if (this.pathPoints.length > 0) {
-      this.pathProgress = 0;
-      this.group.position.copy(this.pathPoints[0]);
-      this.previousPosition.copy(this.pathPoints[0]);
+    // 4. Curva suave de retorno no extremo inicial (U-turn arredondado)
+    const nearCenter = curve.getPoint(0.08);
+    const nearTangent = curve.getTangent(0.08).normalize();
+    const nearSide = new THREE.Vector3(-nearTangent.z, 0, nearTangent.x).normalize();
+    for (let i = 1; i <= arcSteps; i++) {
+      const frac = i / (arcSteps + 1);
+      const angle = frac * Math.PI;
+      const dist = THREE.MathUtils.lerp(outerDist, innerDist, frac) + Math.sin(angle) * 0.6;
+      const fwd = Math.cos(angle) * 0.6;
+      const pt = nearCenter.clone()
+        .add(nearSide.clone().multiplyScalar(dist))
+        .add(nearTangent.clone().multiplyScalar(fwd));
+      if (this.getTerrainHeightFn) {
+        pt.y = this.getTerrainHeightFn(pt.x, pt.z);
+      }
+      trailPoints.push(pt);
     }
+
+    // Cria o spline fechado centripetal (totalmente contínuo e sem quinas afiadas)
+    this.pathCurve = new THREE.CatmullRomCurve3(trailPoints, true, 'centripetal');
+    this.pathLength = this.pathCurve.getLength();
+    this.pathProgress = 0;
+
+    const startPos = this.pathCurve.getPointAt(0);
+    if (this.getTerrainHeightFn) {
+      startPos.y = this.getTerrainHeightFn(startPos.x, startPos.z);
+    }
+    this.group.position.copy(startPos);
+    this.previousPosition.copy(startPos);
+    this.npcVelocity.set(0, 0, 0);
   }
 
   private setupDefaultPath() {
-    this.pathPoints = [
+    const points = [
       new THREE.Vector3(8, 0, -25),
       new THREE.Vector3(9, 0, -10),
       new THREE.Vector3(11, 0, 8),
@@ -343,110 +388,108 @@ export class NPCWithTorch {
       new THREE.Vector3(14, 0, 15),
       new THREE.Vector3(13, 0, -5),
     ];
-    this.group.position.copy(this.pathPoints[0]);
-    this.previousPosition.copy(this.pathPoints[0]);
+    this.pathCurve = new THREE.CatmullRomCurve3(points, true, 'centripetal');
+    this.pathLength = this.pathCurve.getLength();
+    this.pathProgress = 0;
+
+    const startPt = this.pathCurve.getPointAt(0);
+    this.group.position.copy(startPt);
+    this.previousPosition.copy(startPt);
+    this.npcVelocity.set(0, 0, 0);
   }
 
   /**
-   * Atualização com física baseada na realidade:
-   * - Arrasto do ar proporcional à velocidade
-   * - Flutuabilidade térmica ascendente
-   * - Oscilação e cintilação real de chama
-   * - Emissão de brasas/faíscas incandescentes
+   * Atualização frame a frame com cinemática contínua e física real da tocha ao longo do rio
    */
   public update(delta: number, elapsedTime: number) {
-    const dt = Math.min(delta, 0.1);
+    const dt = Math.min(delta, 0.08);
 
-    // 1. Atualização do Movimento do NPC pelo Caminho
-    if (this.pathPoints.length >= 2) {
+    // Modo Rio Procedural: Caminhada contínua, suave e sem quebras por spline
+    this.pauseTimer -= dt;
+      if (this.pauseTimer <= 0) {
+        if (!this.isIdle) {
+          this.isIdle = true;
+          this.idleTimer = 3.2; // Pequena pausa para contemplar o rio
+          this.pauseTimer = 22.0 + Math.random() * 16.0;
+        }
+      }
+
       if (this.isIdle) {
         this.idleTimer -= dt;
         if (this.idleTimer <= 0) {
           this.isIdle = false;
         }
-      } else {
-        const currentTargetIdx = Math.floor(this.pathProgress) % this.pathPoints.length;
-        const nextTargetIdx = (currentTargetIdx + 1) % this.pathPoints.length;
+      }
 
-        const currentPt = this.pathPoints[currentTargetIdx];
-        const nextPt = this.pathPoints[nextTargetIdx];
+      if (!this.isIdle && this.pathCurve && this.pathLength > 0.5) {
+        const progressStep = (this.walkSpeed * dt) / this.pathLength;
+        this.pathProgress = (this.pathProgress + progressStep) % 1.0;
 
-        const segVector = new THREE.Vector3().subVectors(nextPt, currentPt);
-        const segLength = segVector.length();
+        // Amostragem rigorosamente contínua na curva de Bezier/CatmullRom
+        const currentPos = this.pathCurve.getPointAt(this.pathProgress);
+        const forwardDir = this.pathCurve.getTangentAt(this.pathProgress).normalize();
 
-        const step = (this.walkSpeed * dt) / Math.max(0.1, segLength);
-        this.pathProgress += step;
-
-        const segmentT = this.pathProgress - Math.floor(this.pathProgress);
-        const currentPos = new THREE.Vector3().lerpVectors(currentPt, nextPt, segmentT);
-
-        // Garante que o NPC esteja sempre rigorosamente sobre a superfície do terreno
+        // Ajusta rigorosamente à cota do terreno procedural
         if (this.getTerrainHeightFn) {
           currentPos.y = this.getTerrainHeightFn(currentPos.x, currentPos.z);
         }
 
-        // Suaviza a rotação do NPC na direção do movimento
-        if (segLength > 0.01) {
-          const moveDir = segVector.clone().normalize();
-          const targetAngle = Math.atan2(moveDir.x, moveDir.z);
-          // Rotação slerp suave
-          const curRot = this.group.rotation.y;
-          let diff = targetAngle - curRot;
-          while (diff < -Math.PI) diff += Math.PI * 2;
-          while (diff > Math.PI) diff -= Math.PI * 2;
-          this.group.rotation.y += diff * Math.min(1.0, dt * 5.0);
-        }
-
         this.group.position.copy(currentPos);
 
-        // Parada ocasional contemplativa para olhar o rio e descansar
-        if (Math.floor(this.pathProgress) !== Math.floor(this.pathProgress - step)) {
-          if (Math.random() < 0.35) {
-            this.isIdle = true;
-            this.idleTimer = 3.0 + Math.random() * 2.5;
-          }
+        // Alinha a rotação suavemente na direção do movimento (tangente contínua)
+        if (forwardDir.lengthSq() > 0.001) {
+          const targetAngle = Math.atan2(forwardDir.x, forwardDir.z);
+          let diff = targetAngle - this.group.rotation.y;
+          while (diff < -Math.PI) diff += Math.PI * 2;
+          while (diff > Math.PI) diff -= Math.PI * 2;
+          this.group.rotation.y += diff * Math.min(1.0, dt * 6.5);
         }
       }
-    }
 
-    // Cálculo da velocidade real para forças físicas de arrasto
-    this.npcVelocity.subVectors(this.group.position, this.previousPosition).divideScalar(Math.max(0.001, dt));
-    this.previousPosition.copy(this.group.position);
+      // Cálculo de velocidade real com clamp protetivo contra picos de frame rate
+      this.npcVelocity.subVectors(this.group.position, this.previousPosition).divideScalar(Math.max(0.001, dt));
+      if (this.npcVelocity.length() > this.walkSpeed * 1.8) {
+        this.npcVelocity.normalize().multiplyScalar(this.walkSpeed);
+      }
+      this.previousPosition.copy(this.group.position);
 
-    // 2. Animação de Marcha Humana (Cinemática das pernas e tronco)
-    const isWalking = !this.isIdle && this.npcVelocity.lengthSq() > 0.05;
-    if (isWalking) {
-      this.walkCycleTime += dt * 6.5;
-      const walkSwing = Math.sin(this.walkCycleTime);
-      this.leftLeg.rotation.x = walkSwing * 0.55;
-      this.rightLeg.rotation.x = -walkSwing * 0.55;
-      this.leftArm.rotation.x = -walkSwing * 0.45;
-      // Leve oscilação vertical da pelve (bobbing de caminhada)
-      this.bodyMesh.position.y = Math.abs(Math.cos(this.walkCycleTime)) * 0.08;
-      // Braço da tocha erguido e firme com leve estabilização
-      this.rightArm.rotation.x = 0.25 + Math.sin(this.walkCycleTime * 0.5) * 0.05;
-      this.rightArm.rotation.z = -0.15;
-    } else {
-      // Postura de repouso suave respiratória
-      const breath = Math.sin(elapsedTime * 2.2);
-      this.leftLeg.rotation.x = THREE.MathUtils.lerp(this.leftLeg.rotation.x, 0, dt * 5);
-      this.rightLeg.rotation.x = THREE.MathUtils.lerp(this.rightLeg.rotation.x, 0, dt * 5);
-      this.leftArm.rotation.x = THREE.MathUtils.lerp(this.leftArm.rotation.x, breath * 0.06, dt * 4);
-      this.bodyMesh.position.y = breath * 0.03;
-      this.rightArm.rotation.x = 0.35 + breath * 0.05;
-      this.rightArm.rotation.z = -0.12;
-    }
+      // Animação de marcha biomecânica (pernas, braços e oscilação pélvica)
+      const isWalking = !this.isIdle && this.npcVelocity.lengthSq() > 0.08;
+      if (isWalking) {
+        this.walkCycleTime += dt * 6.8;
+        const walkSwing = Math.sin(this.walkCycleTime);
+        this.leftLeg.rotation.x = walkSwing * 0.52;
+        this.rightLeg.rotation.x = -walkSwing * 0.52;
+        this.leftArm.rotation.x = -walkSwing * 0.42;
 
-    // 3. Física Baseada na Realidade da Tocha:
-    // A) Arrasto Aerodinâmico (Air Drag): A chama e os gases quentes são empurrados para trás pelo vento e movimento
-    const airDrag = this.npcVelocity.clone().multiplyScalar(-0.18);
+        // Oscilação vertical harmônica do corpo (bobbing de caminhada)
+        this.bodyMesh.position.y = Math.abs(Math.sin(this.walkCycleTime)) * 0.06;
 
-    // B) Flutuabilidade Térmica (Thermal Buoyancy): O ar aquecido acelera para cima
+        this.headMesh.rotation.y = -walkSwing * 0.04;
+        this.headMesh.rotation.x = 0.04;
+
+        this.rightArm.rotation.x = 0.28 + Math.cos(this.walkCycleTime) * 0.03;
+        this.rightArm.rotation.z = -0.14;
+      } else {
+        // Postura estática de descanso
+        const breath = Math.sin(elapsedTime * 2.2);
+        this.leftLeg.rotation.x = THREE.MathUtils.lerp(this.leftLeg.rotation.x, 0, dt * 6);
+        this.rightLeg.rotation.x = THREE.MathUtils.lerp(this.rightLeg.rotation.x, 0, dt * 6);
+        this.leftArm.rotation.x = THREE.MathUtils.lerp(this.leftArm.rotation.x, breath * 0.06, dt * 5);
+        this.bodyMesh.position.y = breath * 0.025;
+        this.headMesh.rotation.y = THREE.MathUtils.lerp(this.headMesh.rotation.y, 0, dt * 4);
+        this.headMesh.rotation.x = 0.05;
+        this.rightArm.rotation.x = 0.35 + breath * 0.04;
+        this.rightArm.rotation.z = -0.12;
+      }
+
+    // 2. Física Realista da Tocha (Arrasto de ar, empuxo térmico ascendente e inércia)
+    const airDrag = this.npcVelocity.clone().multiplyScalar(-0.16);
     const thermalLift = 1.35;
 
-    // C) Turbulência Convectiva do Vento / Micro-Vórtices
-    const turbulentX = Math.sin(elapsedTime * 14.5) * 0.06 + Math.cos(elapsedTime * 27.2) * 0.04;
-    const turbulentZ = Math.cos(elapsedTime * 12.8) * 0.06 + Math.sin(elapsedTime * 31.0) * 0.04;
+    // Vórtices turbulentos do ar aquecido
+    const turbulentX = Math.sin(elapsedTime * 14.5) * 0.05 + Math.cos(elapsedTime * 27.2) * 0.03;
+    const turbulentZ = Math.cos(elapsedTime * 12.8) * 0.05 + Math.sin(elapsedTime * 31.0) * 0.03;
 
     const targetFlameOffset = new THREE.Vector3(
       airDrag.x + turbulentX,
@@ -454,51 +497,51 @@ export class NPCWithTorch {
       airDrag.z + turbulentZ
     );
 
-    // D) Equação de Mola Amortecida (Inércia da Chama)
-    const springStrength = 14.0;
-    const damping = 0.72;
+    // Sistema de mola amortecida para inércia da chama
+    const springStrength = 16.0;
+    const damping = 0.75;
     const force = new THREE.Vector3().subVectors(targetFlameOffset, this.flameInertiaOffset).multiplyScalar(springStrength);
     this.flameInertiaVelocity.add(force.multiplyScalar(dt));
     this.flameInertiaVelocity.multiplyScalar(Math.pow(damping, dt * 60));
     this.flameInertiaOffset.add(this.flameInertiaVelocity.clone().multiplyScalar(dt));
 
-    // Inclina a geometria da chama visual de acordo com a inércia e arrasto
+    // Limites de segurança para manter a chama unida ao bocal da tocha
+    this.flameInertiaOffset.x = THREE.MathUtils.clamp(this.flameInertiaOffset.x, -0.5, 0.5);
+    this.flameInertiaOffset.z = THREE.MathUtils.clamp(this.flameInertiaOffset.z, -0.5, 0.5);
+    this.flameInertiaOffset.y = THREE.MathUtils.clamp(this.flameInertiaOffset.y, 0.6, 2.0);
+
     this.flameCore.position.x = this.flameInertiaOffset.x * 0.22;
     this.flameCore.position.z = this.flameInertiaOffset.z * 0.22;
     this.flameOuter.position.x = this.flameInertiaOffset.x * 0.35;
     this.flameOuter.position.z = this.flameInertiaOffset.z * 0.35;
 
-    // Pulsação térmica (escala e intensidade)
+    // Pulsação térmica (escala e intensidade da chama)
     const flickerPulse = 1.0 + Math.sin(elapsedTime * 22.0) * 0.12 + Math.cos(elapsedTime * 38.0) * 0.08;
     this.flameCore.scale.set(flickerPulse, flickerPulse * 1.15, flickerPulse);
     this.flameOuter.scale.set(flickerPulse * 1.08, flickerPulse * 1.25, flickerPulse * 1.08);
 
-    // E) Cintilação da Luz Dinâmica (Flickering Realista)
-    // Na realidade, fogo cintila com frequências aleatórias combinadas
+    // Cintilação da Luz Dinâmica (PointLight)
     const rawFlicker =
       Math.sin(elapsedTime * 19.3) * 0.32 +
       Math.sin(elapsedTime * 41.7) * 0.22 +
       (Math.random() - 0.5) * 0.18;
     this.torchLight.intensity = Math.max(1.4, 2.5 + rawFlicker);
 
-    // Obtém a posição absoluta no mundo da ponta da tocha
+    // Posição no espaço mundial da ponta da tocha
     this.torchHandle.getWorldPosition(this.torchTipWorldPos);
     this.torchTipWorldPos.y += 0.5;
 
-    // 4. Emissão e Simulação de Faíscas/Brasas Físicas (Embers)
-    // Converte a posição do topo da tocha para o espaço local do grupo de partículas
+    // 3. Emissão e Propagação de Brasas Físicas (Embers)
     const localTipPos = this.torchTipWorldPos.clone().sub(this.group.position);
 
-    // Emite novas brasas periodicamente
     if (Math.random() < 0.65) {
       const deadEmber = this.embers.find((e) => e.life <= 0);
       if (deadEmber) {
         deadEmber.position.copy(localTipPos);
-        // Velocidade inicial: ar quente sobe + arrasto do movimento + dispersão estocástica
         deadEmber.velocity.set(
-          this.npcVelocity.x * -0.3 + (Math.random() - 0.5) * 0.8,
-          1.8 + Math.random() * 1.4, // Ascensão térmica
-          this.npcVelocity.z * -0.3 + (Math.random() - 0.5) * 0.8
+          this.npcVelocity.x * -0.25 + (Math.random() - 0.5) * 0.6,
+          1.8 + Math.random() * 1.2,
+          this.npcVelocity.z * -0.25 + (Math.random() - 0.5) * 0.6
         );
         deadEmber.life = 0.5 + Math.random() * 0.8;
         deadEmber.maxLife = deadEmber.life;
@@ -507,7 +550,6 @@ export class NPCWithTorch {
       }
     }
 
-    // Atualiza partículas ativas com leis da física
     const posArr = this.emberPositions;
     const colArr = this.emberColors;
 
@@ -515,13 +557,12 @@ export class NPCWithTorch {
       const e = this.embers[i];
       if (e.life > 0) {
         e.life -= dt;
-        const lifeT = 1.0 - e.life / e.maxLife; // 0 a 1
+        const lifeT = 1.0 - e.life / e.maxLife;
 
-        // Física: Flutuabilidade + Arrasto do ar + Turbulência
-        e.velocity.y += 1.8 * dt; // Convecção de ar quente
-        e.velocity.x += (Math.random() - 0.5) * 2.5 * dt;
-        e.velocity.z += (Math.random() - 0.5) * 2.5 * dt;
-        e.velocity.multiplyScalar(Math.pow(0.85, dt * 60)); // Arrasto atmosférico
+        e.velocity.y += 1.8 * dt;
+        e.velocity.x += (Math.random() - 0.5) * 2.0 * dt;
+        e.velocity.z += (Math.random() - 0.5) * 2.0 * dt;
+        e.velocity.multiplyScalar(Math.pow(0.86, dt * 60));
 
         e.position.addScaledVector(e.velocity, dt);
 
@@ -529,30 +570,25 @@ export class NPCWithTorch {
         posArr[i * 3 + 1] = e.position.y;
         posArr[i * 3 + 2] = e.position.z;
 
-        // Decaimento térmico de cores real:
-        // Amarelo incandescente (1.0) -> Laranja (0.6) -> Vermelho carmesim (0.3) -> Fuligem (0.0)
+        // Decaimento térmico de cor
         e.heat = Math.max(0, 1.0 - lifeT);
         if (e.heat > 0.6) {
-          // Amarelo para laranja
           const tColor = (e.heat - 0.6) / 0.4;
           colArr[i * 3] = 1.0;
           colArr[i * 3 + 1] = 0.6 + 0.4 * tColor;
           colArr[i * 3 + 2] = 0.1 * tColor;
         } else if (e.heat > 0.2) {
-          // Laranja para vermelho rubro
           const tColor = (e.heat - 0.2) / 0.4;
           colArr[i * 3] = 0.7 + 0.3 * tColor;
           colArr[i * 3 + 1] = 0.2 * tColor;
           colArr[i * 3 + 2] = 0.0;
         } else {
-          // Vermelho escuro para fuligem cinza
           const tColor = e.heat / 0.2;
           colArr[i * 3] = 0.35 * tColor;
           colArr[i * 3 + 1] = 0.1 * tColor;
           colArr[i * 3 + 2] = 0.05 * tColor;
         }
       } else {
-        // Esconde partícula inativa
         posArr[i * 3 + 1] = -999;
       }
     }
@@ -562,7 +598,7 @@ export class NPCWithTorch {
   }
 
   /**
-   * Fornece dados da tocha para o shader da água refletir a luz pontual e o reflexo especular na superfície do rio
+   * Fornece dados da tocha para o shader da água
    */
   public getTorchData(): { position: THREE.Vector3; color: THREE.Color; intensity: number } {
     return {

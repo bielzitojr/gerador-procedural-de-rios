@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { RiverConfig, ViewMode, CameraMode } from '../types';
+import { RiverConfig, CameraMode } from '../types';
 import { waterVertexShader, waterFragmentShader, WATER_PALETTES } from '../shaders/waterShader';
 import {
   generateCausticsTexture,
@@ -10,7 +10,6 @@ import {
   generateFoamTexture,
 } from '../shaders/proceduralTextures';
 import { generateProceduralRiver, RiverData } from '../procedural/riverMesh';
-import { createDioramaPool, DioramaSceneResult } from './DioramaScene';
 import { WaterRippleSimulation } from '../physics/waterRippleSimulation';
 import { RainSystem } from './RainSystem';
 import { CelestialCycle } from './CelestialCycle';
@@ -20,7 +19,6 @@ import { PhysicalObjectType } from './RiverObjects';
 
 interface RiverCanvasProps {
   config: RiverConfig;
-  viewMode: ViewMode;
   cameraMode: CameraMode;
   onCameraModeChange?: (mode: CameraMode) => void;
   onTimeUpdate?: (timeHour: number) => void;
@@ -28,9 +26,7 @@ interface RiverCanvasProps {
 
 export const RiverCanvas: React.FC<RiverCanvasProps> = ({
   config,
-  viewMode,
   cameraMode,
-  onTimeUpdate,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
@@ -46,18 +42,14 @@ export const RiverCanvas: React.FC<RiverCanvasProps> = ({
 
   const waterMaterialRef = useRef<THREE.ShaderMaterial | null>(null);
   const riverDataRef = useRef<RiverData | null>(null);
-  const dioramaRef = useRef<DioramaSceneResult | null>(null);
   const rippleSimRef = useRef<WaterRippleSimulation | null>(null);
   const rainSystemRef = useRef<RainSystem | null>(null);
 
   const riverGroupRef = useRef<THREE.Group>(new THREE.Group());
-  const dioramaGroupRef = useRef<THREE.Group>(new THREE.Group());
 
   // Keep a stable ref of props for animation loop
   const configRef = useRef(config);
   configRef.current = config;
-  const viewModeRef = useRef(viewMode);
-  viewModeRef.current = viewMode;
   const cameraModeRef = useRef(cameraMode);
   cameraModeRef.current = cameraMode;
 
@@ -77,9 +69,9 @@ export const RiverCanvas: React.FC<RiverCanvasProps> = ({
     scene.background = new THREE.Color('#8cb6de');
     scene.fog = new THREE.Fog('#8cb6de', 85, 260);
 
-    // 2. Camera
-    const camera = new THREE.PerspectiveCamera(42, width / height, 0.5, 300);
-    camera.position.set(7.8, 8.2, 9.8);
+    // 2. Camera: Framed beautifully for procedural river exploration
+    const camera = new THREE.PerspectiveCamera(45, width / height, 0.5, 350);
+    camera.position.set(22, 26, 32);
     cameraRef.current = camera;
 
     // 3. Renderer with antialias and shadow map
@@ -87,8 +79,9 @@ export const RiverCanvas: React.FC<RiverCanvasProps> = ({
       antialias: true,
       powerPreference: 'high-performance',
     });
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
     renderer.setSize(width, height);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setPixelRatio(dpr);
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -101,9 +94,9 @@ export const RiverCanvas: React.FC<RiverCanvasProps> = ({
     controls.enableDamping = true;
     controls.dampingFactor = 0.06;
     controls.maxPolarAngle = Math.PI / 2 - 0.04; // Don't clip below ground
-    controls.minDistance = 3;
-    controls.maxDistance = 140;
-    controls.target.set(0, 0.5, 0);
+    controls.minDistance = 4;
+    controls.maxDistance = 150;
+    controls.target.set(0, 0, 0);
     controlsRef.current = controls;
 
     // 5. Celestial Cycle System (Realistic Day / Night celestial rotation, sun, moon, stars & lighting)
@@ -115,10 +108,13 @@ export const RiverCanvas: React.FC<RiverCanvasProps> = ({
     const rippleSim = new WaterRippleSimulation(256, 130, 130);
     rippleSimRef.current = rippleSim;
 
-    // 7. Depth Render Target for Contact Foam (Identical to reference!)
-    const depthTexture = new THREE.DepthTexture(width, height);
+    // 7. Depth Render Target for Contact Foam (Scaled to physical drawing buffer for all devices)
+    const drawingBufferSize = new THREE.Vector2();
+    renderer.getDrawingBufferSize(drawingBufferSize);
+
+    const depthTexture = new THREE.DepthTexture(drawingBufferSize.x, drawingBufferSize.y);
     depthTexture.type = THREE.UnsignedIntType;
-    const depthTarget = new THREE.WebGLRenderTarget(width, height, {
+    const depthTarget = new THREE.WebGLRenderTarget(drawingBufferSize.x, drawingBufferSize.y, {
       depthTexture,
       depthBuffer: true,
       minFilter: THREE.NearestFilter,
@@ -202,7 +198,7 @@ export const RiverCanvas: React.FC<RiverCanvasProps> = ({
 
         uInvProjectionMatrix: { value: new THREE.Matrix4() },
         uInvViewMatrix: { value: new THREE.Matrix4() },
-        uResolution: { value: new THREE.Vector2(width, height) },
+        uResolution: { value: new THREE.Vector2(drawingBufferSize.x, drawingBufferSize.y) },
         uHasDepth: { value: 1 },
       },
       transparent: true,
@@ -213,12 +209,11 @@ export const RiverCanvas: React.FC<RiverCanvasProps> = ({
 
     // Groups
     scene.add(riverGroupRef.current);
-    scene.add(dioramaGroupRef.current);
 
     // 9. Rain System
-    const rainSystem = new RainSystem(viewModeRef.current === 'river' ? 3200 : 1400);
+    const rainSystem = new RainSystem(3200);
     rainSystemRef.current = rainSystem;
-    rainSystem.setConfig(configRef.current.isRaining, configRef.current.rainIntensity, viewModeRef.current);
+    rainSystem.setConfig(configRef.current.isRaining, configRef.current.rainIntensity);
     scene.add(rainSystem.group);
 
     // 10. NPC com Tocha (Física real de chama, arrasto do ar, convecção e luz dinâmica)
@@ -231,12 +226,7 @@ export const RiverCanvas: React.FC<RiverCanvasProps> = ({
     puddlesRef.current = puddles;
     riverGroupRef.current.add(puddles.group);
 
-    // 12. Diorama creation
-    const diorama = createDioramaPool(waterMaterial);
-    dioramaRef.current = diorama;
-    dioramaGroupRef.current.add(diorama.group);
-
-    // 10. Pointer Interactions (Click / Drag on water and objects to spawn ripples)
+    // 12. Pointer Interactions (Click / Drag on water and objects to spawn ripples)
     const raycaster = new THREE.Raycaster();
     const mouse = new THREE.Vector2();
     let isInteracting = false;
@@ -249,23 +239,8 @@ export const RiverCanvas: React.FC<RiverCanvasProps> = ({
 
       raycaster.setFromCamera(mouse, camera);
 
-      // 1. Check duck & physical object interaction
-      if (dioramaRef.current && isClick && viewModeRef.current === 'reference_pool') {
-        const duckHits = raycaster.intersectObjects(dioramaRef.current.duck.children, true);
-        if (duckHits.length > 0) {
-          dioramaRef.current.applyDuckImpulse(-0.65);
-          rippleSim.addRipple(
-            dioramaRef.current.duck.position.x,
-            dioramaRef.current.duck.position.z,
-            0.55,
-            2.2 * configRef.current.rippleIntensity
-          );
-          return;
-        }
-      }
-
       // Interação física direta no rio ao clicar nos objetos
-      if (viewModeRef.current === 'river' && riverDataRef.current && isClick) {
+      if (riverDataRef.current && isClick) {
         const physHits = raycaster.intersectObjects(riverDataRef.current.objectsGroup.children, true);
         if (physHits.length > 0) {
           let hitMesh: THREE.Object3D | null = physHits[0].object;
@@ -288,12 +263,8 @@ export const RiverCanvas: React.FC<RiverCanvasProps> = ({
         }
       }
 
-      // 2. Check water surface intersection
-      const currentWater =
-        viewModeRef.current === 'river'
-          ? riverDataRef.current?.waterMesh
-          : dioramaRef.current?.waterMesh;
-
+      // Check water surface intersection
+      const currentWater = riverDataRef.current?.waterMesh;
       if (currentWater) {
         const hits = raycaster.intersectObject(currentWater, false);
         if (hits.length > 0) {
@@ -301,8 +272,7 @@ export const RiverCanvas: React.FC<RiverCanvasProps> = ({
           const now = performance.now();
           if (now - lastRippleTime > (isClick ? 25 : 55)) {
             lastRippleTime = now;
-            const isRiver = viewModeRef.current === 'river';
-            const radius = isRiver ? (isClick ? 2.4 : 1.5) : (isClick ? 0.55 : 0.35);
+            const radius = isClick ? 2.4 : 1.5;
             const strength = (isClick ? 2.2 : 1.3) * configRef.current.rippleIntensity;
             rippleSim.addRipple(
               hit.point.x,
@@ -339,7 +309,7 @@ export const RiverCanvas: React.FC<RiverCanvasProps> = ({
 
     // Custom event to push duck from UI button
     const onPushDuck = () => {
-      if (viewModeRef.current === 'river' && riverDataRef.current) {
+      if (riverDataRef.current) {
         riverDataRef.current.physicsManager.applyImpulseToFirst(new THREE.Vector3(0, -4.5, 2.2));
         const firstObj = riverDataRef.current.physicsManager.objects[0];
         if (firstObj) {
@@ -350,14 +320,6 @@ export const RiverCanvas: React.FC<RiverCanvasProps> = ({
             2.6 * configRef.current.rippleIntensity
           );
         }
-      } else if (dioramaRef.current) {
-        dioramaRef.current.applyDuckImpulse(-0.7);
-        rippleSim.addRipple(
-          dioramaRef.current.duck.position.x,
-          dioramaRef.current.duck.position.z,
-          0.6,
-          2.4 * configRef.current.rippleIntensity
-        );
       }
     };
 
@@ -366,7 +328,7 @@ export const RiverCanvas: React.FC<RiverCanvasProps> = ({
       const customEvent = e as CustomEvent<{ type: PhysicalObjectType; dropFromHeight?: boolean; x?: number; z?: number }>;
       const type = customEvent.detail?.type || 'duck';
 
-      if (viewModeRef.current === 'river' && riverDataRef.current) {
+      if (riverDataRef.current) {
         const curve = riverDataRef.current.curve;
         let spawnPos: THREE.Vector3;
 
@@ -411,8 +373,8 @@ export const RiverCanvas: React.FC<RiverCanvasProps> = ({
       const delta = clock.getDelta();
       const elapsed = clock.getElapsedTime();
 
-      // Update current mode
-      if (viewModeRef.current === 'river' && riverDataRef.current) {
+      // Update river physics and floating objects
+      if (riverDataRef.current) {
         riverDataRef.current.update(
           elapsed,
           delta,
@@ -436,37 +398,15 @@ export const RiverCanvas: React.FC<RiverCanvasProps> = ({
           const targetCamPos = duckPos.clone().add(camOffset);
           camera.position.lerp(targetCamPos, 0.06);
         }
-      } else if (viewModeRef.current === 'reference_pool' && dioramaRef.current) {
-        dioramaRef.current.update(
-          elapsed,
-          delta,
-          {
-            waterDensity: configRef.current.waterDensity,
-            buoyancy: configRef.current.buoyancy,
-            waterViscosity: configRef.current.waterViscosity,
-            rippleIntensity: configRef.current.rippleIntensity,
-            duckCount: configRef.current.duckCount,
-          },
-          (x, z, r, s) => {
-            rippleSimRef.current?.addRipple(x, z, r, s);
-          }
-        );
       }
 
-      // Step wave equation & directional wake trail simulation
-      if (rippleSimRef.current) {
-        rippleSimRef.current.update(configRef.current.waveDamping, delta);
-      }
+      // Step wave ripple simulation
+      rippleSim.update(configRef.current.waveDamping, delta);
 
-      // Rain System simulation & water surface impact
+      // Rain System updates
       if (rainSystemRef.current) {
-        rainSystemRef.current.setConfig(
-          configRef.current.isRaining,
-          configRef.current.rainIntensity,
-          viewModeRef.current
-        );
         rainSystemRef.current.update(delta, elapsed, (x, z, r, s) => {
-          rippleSimRef.current?.addRipple(x, z, r, s);
+          rippleSim.addRipple(x, z, r, s);
         });
       }
 
@@ -495,25 +435,20 @@ export const RiverCanvas: React.FC<RiverCanvasProps> = ({
         renderer.toneMappingExposure = currentCelState.exposure;
       }
 
-      // NPC com Tocha e Luz Dinâmica
+      // NPC com Tocha e Luz Dinâmica caminhando pelo relevo do rio
       let torchData = {
         position: new THREE.Vector3(0, -999, 0),
         color: new THREE.Color(0xff7722),
         intensity: 0.0,
       };
       if (npcRef.current) {
-        // Se na piscina de referência, posiciona o NPC como observador charmoso na borda
-        if (viewModeRef.current === 'reference_pool') {
-          npcRef.current.group.position.set(7.5, 0.4, 6.0);
-          npcRef.current.group.rotation.y = -Math.PI * 0.75;
-        }
         npcRef.current.update(delta, elapsed);
         torchData = npcRef.current.getTorchData();
       }
 
       // Sistema de Poças de Água pelo Mapa
       if (puddlesRef.current && currentCelState) {
-        puddlesRef.current.group.visible = viewModeRef.current === 'river';
+        puddlesRef.current.group.visible = true;
         puddlesRef.current.update(
           elapsed,
           currentCelState.skyHorizonColor,
@@ -549,11 +484,7 @@ export const RiverCanvas: React.FC<RiverCanvasProps> = ({
 
       // Two-pass rendering for depth-based contact foam:
       // Pass 1: Render opaque scene into depth target (hide water surface temporarily)
-      const currentWaterMesh =
-        viewModeRef.current === 'river'
-          ? riverDataRef.current?.waterMesh
-          : dioramaRef.current?.waterMesh;
-
+      const currentWaterMesh = riverDataRef.current?.waterMesh;
       if (currentWaterMesh) {
         currentWaterMesh.visible = false;
       }
@@ -571,7 +502,7 @@ export const RiverCanvas: React.FC<RiverCanvasProps> = ({
 
     animate();
 
-    // Resize Handler
+    // Resize Handler with DPR buffer sizing
     const handleResize = () => {
       if (!container) return;
       const w = container.clientWidth;
@@ -579,9 +510,10 @@ export const RiverCanvas: React.FC<RiverCanvasProps> = ({
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
       renderer.setSize(w, h);
-      depthTarget.setSize(w, h);
+      renderer.getDrawingBufferSize(drawingBufferSize);
+      depthTarget.setSize(drawingBufferSize.x, drawingBufferSize.y);
       if (waterMaterialRef.current) {
-        waterMaterialRef.current.uniforms.uResolution.value.set(w, h);
+        waterMaterialRef.current.uniforms.uResolution.value.copy(drawingBufferSize);
       }
     };
 
@@ -678,6 +610,13 @@ export const RiverCanvas: React.FC<RiverCanvasProps> = ({
     }
   }, [config.timeOfDay, config.timeHour]);
 
+  // Update rain settings
+  useEffect(() => {
+    if (rainSystemRef.current) {
+      rainSystemRef.current.setConfig(config.isRaining, config.rainIntensity);
+    }
+  }, [config.isRaining, config.rainIntensity]);
+
   // Update water material uniforms when shader config or palette changes
   useEffect(() => {
     if (!waterMaterialRef.current) return;
@@ -707,54 +646,20 @@ export const RiverCanvas: React.FC<RiverCanvasProps> = ({
     config.rippleIntensity,
   ]);
 
-  // Handle ViewMode toggle (River vs Reference Pool Diorama)
-  useEffect(() => {
-    riverGroupRef.current.visible = viewMode === 'river';
-    dioramaGroupRef.current.visible = viewMode === 'reference_pool';
-
-    if (rainSystemRef.current) {
-      rainSystemRef.current.setConfig(config.isRaining, config.rainIntensity, viewMode);
-    }
-
-    if (rippleSimRef.current && waterMaterialRef.current) {
-      if (viewMode === 'reference_pool') {
-        rippleSimRef.current.setBounds(0, 0, 7.8, 7.8);
-      } else {
-        rippleSimRef.current.setBounds(0, 0, 130, 130);
-      }
-      waterMaterialRef.current.uniforms.uRippleWorldCenter.value.copy(rippleSimRef.current.worldCenter);
-      waterMaterialRef.current.uniforms.uRippleWorldSize.value.copy(rippleSimRef.current.worldSize);
-    }
-
-    if (cameraRef.current && controlsRef.current) {
-      if (viewMode === 'reference_pool') {
-        // Position camera exactly like the reference screenshot!
-        cameraRef.current.position.set(7.8, 8.2, 9.8);
-        controlsRef.current.target.set(0, 0.5, 0);
-        controlsRef.current.maxDistance = 45;
-      } else {
-        cameraRef.current.position.set(16, 22, 28);
-        controlsRef.current.target.set(0, 0, 0);
-        controlsRef.current.maxDistance = 140;
-      }
-      controlsRef.current.update();
-    }
-  }, [viewMode]);
-
   // Handle Camera Mode changes
   useEffect(() => {
     if (!cameraRef.current || !controlsRef.current) return;
 
     if (cameraMode === 'top_down') {
-      cameraRef.current.position.set(0, 55, 0.1);
+      cameraRef.current.position.set(0, 65, 0.1);
       controlsRef.current.target.set(0, 0, 0);
       controlsRef.current.update();
-    } else if (cameraMode === 'orbit' && viewMode === 'river') {
-      cameraRef.current.position.set(18, 22, 26);
+    } else if (cameraMode === 'orbit') {
+      cameraRef.current.position.set(22, 26, 32);
       controlsRef.current.target.set(0, 0, 0);
       controlsRef.current.update();
     }
-  }, [cameraMode, viewMode]);
+  }, [cameraMode]);
 
   return (
     <div

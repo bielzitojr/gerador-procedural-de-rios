@@ -1,19 +1,16 @@
 import React, { useState, useCallback } from 'react';
 import { RiverCanvas } from './components/RiverCanvas';
 import { ControlPanel } from './components/ControlPanel';
-import { RiverConfig, ViewMode, CameraMode, TimeOfDay } from './types';
+import { RiverConfig, CameraMode } from './types';
 import {
   RotateCcw,
   Sparkles,
   Maximize2,
   HelpCircle,
   X,
-  Compass,
-  Box,
   Sun,
   Sunset,
   Moon,
-  Hand,
   CloudRain,
   Clock,
 } from 'lucide-react';
@@ -52,7 +49,6 @@ const INITIAL_CONFIG: RiverConfig = {
 
 export default function App() {
   const [config, setConfig] = useState<RiverConfig>(INITIAL_CONFIG);
-  const [viewMode, setViewMode] = useState<ViewMode>('reference_pool');
   const [cameraMode, setCameraMode] = useState<CameraMode>('orbit');
   const [showHelp, setShowHelp] = useState(false);
 
@@ -83,7 +79,6 @@ export default function App() {
       {/* 3D WebGL Canvas */}
       <RiverCanvas
         config={config}
-        viewMode={viewMode}
         cameraMode={cameraMode}
         onCameraModeChange={setCameraMode}
       />
@@ -92,8 +87,6 @@ export default function App() {
       <ControlPanel
         config={config}
         onChange={setConfig}
-        viewMode={viewMode}
-        onViewModeChange={setViewMode}
         cameraMode={cameraMode}
         onCameraModeChange={setCameraMode}
         onRandomizeSeed={handleRandomizeSeed}
@@ -200,47 +193,6 @@ export default function App() {
           <span className="hidden sm:inline">{config.isRaining ? 'Chuva Ligada' : 'Chuva'}</span>
         </button>
 
-        {/* Quick Mode Toggle Pill */}
-        <div className="bg-slate-900/80 backdrop-blur-md border border-slate-700/60 rounded-xl p-1 flex items-center shadow-lg">
-          <button
-            id="quick-toggle-river"
-            onClick={() => setViewMode('river')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all ${
-              viewMode === 'river'
-                ? 'bg-cyan-500 text-slate-950 shadow-sm'
-                : 'text-slate-300 hover:text-white'
-            }`}
-          >
-            <Compass className="w-3.5 h-3.5" />
-            Rio
-          </button>
-          <button
-            id="quick-toggle-pool"
-            onClick={() => setViewMode('reference_pool')}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all ${
-              viewMode === 'reference_pool'
-                ? 'bg-cyan-500 text-slate-950 shadow-sm'
-                : 'text-slate-300 hover:text-white'
-            }`}
-          >
-            <Box className="w-3.5 h-3.5" />
-            Piscina
-          </button>
-        </div>
-
-        {/* Interactive Push Duck / Splash Button */}
-        {viewMode === 'reference_pool' && (
-          <button
-            id="btn-push-duck-top"
-            onClick={() => window.dispatchEvent(new CustomEvent('applet:push-duck'))}
-            className="px-3 py-2 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 hover:text-amber-200 border border-amber-400/40 shadow-lg transition-all flex items-center gap-1.5 text-xs font-medium"
-            title="Empurrar o patinho para baixo para ver o efeito de flutuação e ondulações"
-          >
-            <Hand className="w-3.5 h-3.5" />
-            <span className="hidden md:inline">Mergulhar Pato</span>
-          </button>
-        )}
-
         {/* Reset */}
         <button
           id="btn-reset"
@@ -257,7 +209,7 @@ export default function App() {
           id="btn-info"
           onClick={() => setShowHelp(true)}
           className="p-2.5 rounded-xl bg-slate-900/80 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-700/60 shadow-lg transition-all"
-          title="Sobre o Shader de Água"
+          title="Sobre o Gerador de Rios"
           aria-label="Sobre o shader e controles"
         >
           <HelpCircle className="w-4 h-4" />
@@ -280,9 +232,7 @@ export default function App() {
         <div className="bg-slate-900/80 backdrop-blur-md border border-slate-700/60 px-4 py-1.5 rounded-full shadow-xl flex items-center gap-2.5 text-xs text-slate-200">
           <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
           <span className="font-medium">
-            {viewMode === 'river'
-              ? `Rio Procedural • Semente: ${config.seed} • ${config.duckCount} Patinhos`
-              : 'Piscina de Referência 1:1 (Shader Toon Water)'}
+            Rio Procedural • Semente: {config.seed} • {config.duckCount} Patinhos
           </span>
           <span className="text-slate-500">|</span>
           <span className="text-cyan-300 text-[11px]">
@@ -299,7 +249,7 @@ export default function App() {
               <div className="flex items-center gap-2">
                 <Sparkles className="w-5 h-5 text-cyan-400" />
                 <h2 className="text-base font-semibold text-white">
-                  Shader de Água Estilizada (Toon Water)
+                  Gerador Procedural de Rios (Shader Toon Water)
                 </h2>
               </div>
               <button
@@ -312,23 +262,23 @@ export default function App() {
 
             <div className="space-y-3 text-xs leading-relaxed text-slate-300">
               <p>
-                Este projeto reproduz com precisão o shader de água estilizado da sua imagem de referência:
+                Gerador procedural de rios em 3D com shader de água estilizada toon:
               </p>
               <ul className="space-y-2 list-disc list-inside text-slate-300 pl-1">
                 <li>
-                  <strong className="text-cyan-300">Espuma de Contato Dinâmica:</strong> Análise de buffer de profundidade e bordas calculando a faixa branca sólida ao redor das margens, patinhos e rochas.
+                  <strong className="text-cyan-300">Espuma de Contato Dinâmica:</strong> Margens do rio e rochas submersas geram espuma suave e viva.
                 </li>
                 <li>
-                  <strong className="text-cyan-300">Cáusticas Voronoi Celulares:</strong> Padrão procedural de reflexos cristalinos em formato celular que deslizam com a correnteza.
+                  <strong className="text-cyan-300">Cáusticas Voronoi Celulares:</strong> Padrão procedural de reflexos cristalinos deslizando com a correnteza.
                 </li>
                 <li>
-                  <strong className="text-cyan-300">Gradiente de Profundidade:</strong> Transição suave entre turquesa raso translúcido e azul profundo no leito do rio.
+                  <strong className="text-cyan-300">Gradiente de Profundidade:</strong> Transição suave entre turquesa raso e azul profundo no leito do rio.
                 </li>
                 <li>
-                  <strong className="text-cyan-300">Patinho de Borracha:</strong> Flutua e navega seguindo a correnteza e a ondulação das ondas com física suave.
+                  <strong className="text-cyan-300">Física de Objetos e Patinhos:</strong> Flutuação, inércia, ondas de choque ao clicar e natação ao longo da correnteza.
                 </li>
                 <li>
-                  <strong className="text-cyan-300">Dois Modos de Visualização:</strong> O <em>Rio Procedural</em> (canyon com curvas, relevo e pedras) e a <em>Piscina de Referência</em> (a cena exata da sua imagem com o pato e as pílulas).
+                  <strong className="text-cyan-300">Ciclo Dia/Noite & Clima:</strong> Luz dinâmica, sol, lua, chuva, poças de água e tocha com física de fogo realista.
                 </li>
               </ul>
             </div>

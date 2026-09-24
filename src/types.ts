@@ -43,5 +43,5 @@ export interface WaterPalette {
   sunGlintColor: string;
 }
 
-export type ViewMode = 'river' | 'reference_pool';
+export type ViewMode = 'river';
 export type CameraMode = 'orbit' | 'follow_duck' | 'top_down';

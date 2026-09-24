@@ -9,7 +9,6 @@ import {
   ChevronDown,
   ChevronUp,
   Sliders,
-  Box,
   Compass,
   Sun,
   Sunset,
@@ -25,15 +24,13 @@ import {
   Ship,
   Trash2,
 } from 'lucide-react';
-import { RiverConfig, ViewMode, CameraMode } from '../types';
+import { RiverConfig, CameraMode } from '../types';
 import { WATER_PALETTES } from '../shaders/waterShader';
 import { PhysicalObjectType, PHYSICAL_OBJECT_DEFS } from './RiverObjects';
 
 interface ControlPanelProps {
   config: RiverConfig;
   onChange: (newConfig: RiverConfig) => void;
-  viewMode: ViewMode;
-  onViewModeChange: (mode: ViewMode) => void;
   cameraMode: CameraMode;
   onCameraModeChange: (mode: CameraMode) => void;
   onRandomizeSeed: () => void;
@@ -42,8 +39,6 @@ interface ControlPanelProps {
 export const ControlPanel: React.FC<ControlPanelProps> = ({
   config,
   onChange,
-  viewMode,
-  onViewModeChange,
   cameraMode,
   onCameraModeChange,
   onRandomizeSeed,
@@ -108,34 +103,6 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
 
       {isExpanded && (
         <div className="p-3.5 space-y-3.5 max-h-[calc(100vh-8rem)] overflow-y-auto custom-scrollbar">
-          {/* View Mode Selector: River vs Reference Pool */}
-          <div className="bg-slate-800/80 p-1 rounded-lg flex border border-slate-700/60">
-            <button
-              id="view-mode-river"
-              onClick={() => onViewModeChange('river')}
-              className={`flex-1 py-1.5 px-2 rounded-md text-xs font-medium flex items-center justify-center gap-1.5 transition-all ${
-                viewMode === 'river'
-                  ? 'bg-cyan-500 text-slate-950 font-semibold shadow-sm'
-                  : 'text-slate-300 hover:text-white hover:bg-slate-700/50'
-              }`}
-            >
-              <Compass className="w-3.5 h-3.5" />
-              Rio Procedural
-            </button>
-            <button
-              id="view-mode-pool"
-              onClick={() => onViewModeChange('reference_pool')}
-              className={`flex-1 py-1.5 px-2 rounded-md text-xs font-medium flex items-center justify-center gap-1.5 transition-all ${
-                viewMode === 'reference_pool'
-                  ? 'bg-cyan-500 text-slate-950 font-semibold shadow-sm'
-                  : 'text-slate-300 hover:text-white hover:bg-slate-700/50'
-              }`}
-            >
-              <Box className="w-3.5 h-3.5" />
-              Piscina de Referência
-            </button>
-          </div>
-
           {/* Ciclo Dia / Noite com Rotação Semelhante à Realidade */}
           <div className="space-y-1.5 p-2 bg-slate-800/60 rounded-lg border border-slate-700/60">
             <div className="flex justify-between items-center text-[11px]">
@@ -349,33 +316,29 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
           </div>
 
           {/* Quick Action: New River */}
-          {viewMode === 'river' && (
-            <button
-              id="randomize-river-btn"
-              onClick={onRandomizeSeed}
-              className="w-full py-2 px-3 bg-gradient-to-r from-cyan-500 to-teal-500 hover:from-cyan-400 hover:to-teal-400 text-slate-950 font-semibold rounded-lg text-xs flex items-center justify-center gap-2 shadow-md transition-all active:scale-[0.98]"
-            >
-              <Shuffle className="w-4 h-4" />
-              Gerar Novo Rio Aleatório
-            </button>
-          )}
+          <button
+            id="randomize-river-btn"
+            onClick={onRandomizeSeed}
+            className="w-full py-2 px-3 bg-gradient-to-r from-cyan-500 to-teal-500 hover:from-cyan-400 hover:to-teal-400 text-slate-950 font-semibold rounded-lg text-xs flex items-center justify-center gap-2 shadow-md transition-all active:scale-[0.98]"
+          >
+            <Shuffle className="w-4 h-4" />
+            Gerar Novo Rio Aleatório
+          </button>
 
           {/* Navigation Tabs */}
           <div className="flex border-b border-slate-800 text-[11px] font-medium">
-            {viewMode === 'river' && (
-              <button
-                id="tab-river"
-                onClick={() => setActiveTab('river')}
-                className={`flex-1 pb-2 flex items-center justify-center gap-1 border-b-2 transition-colors ${
-                  activeTab === 'river'
-                    ? 'border-cyan-400 text-cyan-300 font-semibold'
-                    : 'border-transparent text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                <Layers className="w-3.5 h-3.5" />
-                Rio
-              </button>
-            )}
+            <button
+              id="tab-river"
+              onClick={() => setActiveTab('river')}
+              className={`flex-1 pb-2 flex items-center justify-center gap-1 border-b-2 transition-colors ${
+                activeTab === 'river'
+                  ? 'border-cyan-400 text-cyan-300 font-semibold'
+                  : 'border-transparent text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Layers className="w-3.5 h-3.5" />
+              Rio
+            </button>
             <button
               id="tab-water"
               onClick={() => setActiveTab('water')}
@@ -415,7 +378,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
           </div>
 
           {/* TAB 1: River & Terrain Parameters */}
-          {activeTab === 'river' && viewMode === 'river' && (
+          {activeTab === 'river' && (
             <div className="space-y-3 text-xs">
               {/* Meander / Curvature */}
               <div className="space-y-1">
@@ -855,7 +818,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
                   className="w-full accent-cyan-400 h-1.5 bg-slate-700 rounded-lg cursor-pointer"
                 />
                 <p className="text-[10px] text-slate-400">
-                  Valores altos propagam as ondas pela piscina toda por mais tempo.
+                  Valores altos propagam as ondas pelo rio todo por mais tempo.
                 </p>
               </div>
 
@@ -948,25 +911,23 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
                   </div>
                 </button>
 
-                {viewMode === 'river' && (
-                  <button
-                    id="cam-follow"
-                    onClick={() => onCameraModeChange('follow_duck')}
-                    className={`w-full p-2 rounded-lg border text-left flex items-center gap-2.5 transition-all ${
-                      cameraMode === 'follow_duck'
-                        ? 'border-cyan-400 bg-cyan-950/40 text-white font-medium shadow-sm'
-                        : 'border-slate-700/60 bg-slate-800/40 text-slate-300 hover:border-slate-600'
-                    }`}
-                  >
-                    <Sliders className="w-4 h-4 text-cyan-400" />
-                    <div>
-                      <div className="text-xs">Seguir Patinho de Borracha</div>
-                      <div className="text-[10px] text-slate-400">
-                        Câmera cinematográfica acompanhando o patinho no rio.
-                      </div>
+                <button
+                  id="cam-follow"
+                  onClick={() => onCameraModeChange('follow_duck')}
+                  className={`w-full p-2 rounded-lg border text-left flex items-center gap-2.5 transition-all ${
+                    cameraMode === 'follow_duck'
+                      ? 'border-cyan-400 bg-cyan-950/40 text-white font-medium shadow-sm'
+                      : 'border-slate-700/60 bg-slate-800/40 text-slate-300 hover:border-slate-600'
+                  }`}
+                >
+                  <Sliders className="w-4 h-4 text-cyan-400" />
+                  <div>
+                    <div className="text-xs">Seguir Patinho de Borracha</div>
+                    <div className="text-[10px] text-slate-400">
+                      Câmera cinematográfica acompanhando o patinho no rio.
                     </div>
-                  </button>
-                )}
+                  </div>
+                </button>
 
                 <button
                   id="cam-top"

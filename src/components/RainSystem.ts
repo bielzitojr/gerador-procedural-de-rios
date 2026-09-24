@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import { ViewMode } from '../types';
 
 export class RainSystem {
   public group: THREE.Group;
@@ -16,14 +15,13 @@ export class RainSystem {
   private splashMax = 64;
   private nextSplashIdx = 0;
 
-  private currentViewMode: ViewMode = 'river';
   private intensity: number = 1.0;
   private isRaining: boolean = false;
   private currentOpacity: number = 0.0;
 
-  // Bounds for dropping rain
-  private areaWidth = 90;
-  private areaHeight = 90;
+  // Bounds for dropping rain (optimized for procedural river terrain)
+  private areaWidth = 110;
+  private areaHeight = 110;
   private topY = 32;
   private bottomY = 0;
 
@@ -123,44 +121,9 @@ export class RainSystem {
     this.group.add(this.splashParticles);
   }
 
-  public setConfig(isRaining: boolean, intensity: number, viewMode: ViewMode) {
+  public setConfig(isRaining: boolean, intensity: number) {
     this.isRaining = isRaining;
     this.intensity = THREE.MathUtils.clamp(intensity, 0.1, 2.5);
-
-    if (this.currentViewMode !== viewMode) {
-      this.currentViewMode = viewMode;
-      this.resetRainBounds();
-    }
-  }
-
-  private resetRainBounds() {
-    if (this.currentViewMode === 'reference_pool') {
-      this.areaWidth = 8.5;
-      this.areaHeight = 8.5;
-      this.topY = 12;
-    } else {
-      this.areaWidth = 95;
-      this.areaHeight = 95;
-      this.topY = 32;
-    }
-
-    // Redistribute rain drops within the new bounds
-    for (let i = 0; i < this.dropCount; i++) {
-      const x = (Math.random() - 0.5) * this.areaWidth;
-      const z = (Math.random() - 0.5) * this.areaHeight;
-      const y = Math.random() * this.topY;
-      const len = (this.currentViewMode === 'reference_pool' ? 0.25 : 0.45) + Math.random() * 0.35;
-
-      const idx = i * 6;
-      this.positions[idx] = x;
-      this.positions[idx + 1] = y + len;
-      this.positions[idx + 2] = z;
-
-      this.positions[idx + 3] = x + 0.04;
-      this.positions[idx + 4] = y;
-      this.positions[idx + 5] = z + 0.03;
-    }
-    this.lineSegments.geometry.attributes.position.needsUpdate = true;
   }
 
   private spawnSplash(x: number, z: number) {
@@ -192,11 +155,7 @@ export class RainSystem {
 
     // Number of active drops scales with intensity
     const activeCount = Math.floor(this.dropCount * Math.min(1.0, 0.3 + this.intensity * 0.7));
-    const isPool = this.currentViewMode === 'reference_pool';
-    const halfW = this.areaWidth * 0.5;
-    const halfH = this.areaHeight * 0.5;
-
-    let rippleBudget = Math.floor((isPool ? 1 : 4) * this.intensity);
+    let rippleBudget = Math.floor(4 * this.intensity);
     const now = time;
     const canSpawnRipple = addRipple && (now - this.lastRippleTime > 0.045);
 
@@ -224,8 +183,8 @@ export class RainSystem {
         if (canSpawnRipple && rippleBudget > 0 && Math.random() < 0.35) {
           this.lastRippleTime = now;
           rippleBudget--;
-          const radius = isPool ? 0.22 : 0.95;
-          const strength = (isPool ? 0.12 : 0.22) * this.intensity;
+          const radius = 0.95;
+          const strength = 0.22 * this.intensity;
           addRipple(hitX, hitZ, radius, strength);
         }
 

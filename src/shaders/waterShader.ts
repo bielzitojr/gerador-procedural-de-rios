@@ -134,7 +134,7 @@ void main() {
     pos.y += (sinP1 * a1 + sinP2 * a2 + sinP3 * a3);
 
     // Na praia (z próximo da costa z=-30), as ondas quebram suavemente e avançam na areia
-    float coastDist = initialWorldPos.z - (-30.0);
+    float coastDist = initialWorldPos.z - (-30.0 + sin(initialWorldPos.x * 0.045) * 6.0 + sin(initialWorldPos.x * 0.105 + 1.3) * 2.5);
     if (coastDist < 14.0 && coastDist > -12.0) {
       float shoreRunup = sin(uTime * c1 * 0.85 + initialWorldPos.x * 0.12) * 0.5 + 0.5;
       pos.y += shoreRunup * effAmp * 0.20;
@@ -681,6 +681,9 @@ void main() {
 
   // 8.5 Ondas em Praias e Mares: Cristas Espumosas (Whitecaps) e Arrebentação Costeira
   if (uIsOcean == 1) {
+    float oceanDepth = smoothstep(0.4, 10.0, vert_depth);
+    vec3 oceanTint = mix(vec3(0.05,0.85,0.78),vec3(0.015,0.23,0.53),oceanDepth);
+    color = mix(color, oceanTint * (0.88 + organicWash * 0.30), 0.45 * uDayFactor);
     // a) Cristas Espumosas Oceânicas (carneirinhos que dependem da variante de onda)
     float crestCutoff = 0.55;
     float crestIntensity = 1.0;
@@ -707,13 +710,15 @@ void main() {
     color = mix(color, oceanFoamColor, clamp(crestFoam * 0.78, 0.0, 0.88));
 
     // b) Arrebentação e Espraiamento da Onda na Areia da Praia (próximo de z = -30)
-    float distToCoast = vWorldPosition.z - (-30.0);
+    float distToCoast = vWorldPosition.z - (-30.0 + sin(vWorldPosition.x * 0.045) * 6.0 + sin(vWorldPosition.x * 0.105 + 1.3) * 2.5);
     if (distToCoast < 16.0 && distToCoast > -10.0) {
       float beachCycle = sin(uTime * 1.5 + vWorldPosition.x * 0.14) * 0.5 + 0.5;
-      float washZone = smoothstep(14.0, -2.0, distToCoast);
+      float washZone = 1.0 - smoothstep(-2.0, 14.0, distToCoast);
       float surfWash = smoothstep(0.42, 0.85, beachCycle * 0.75 + washZone * 0.45);
       float surfNoise = texture2D(uWaveTexture, vWorldPosition.xz * 0.32).r;
-      float lacySurf = surfWash * smoothstep(0.32, 0.76, surfNoise + surfWash * 0.25);
+      float breaker = pow(0.5 + 0.5 * sin(distToCoast * 1.2 + uTime * uOceanSpeed * 1.8 + surfNoise * 2.5), 5.0);
+      float contact = (1.0 - smoothstep(0.08, 1.4, vert_depth)) * canShowBottom;
+      float lacySurf = max(contact, max(surfWash * 0.6, breaker) * smoothstep(0.32,0.68,surfNoise+0.18));
 
       color = mix(color, oceanFoamColor, clamp(lacySurf * 0.65 * washZone, 0.0, 0.90));
     }
@@ -789,6 +794,13 @@ void main() {
   }
 
   // Renderização final suave, rica e translúcida
+  if (uIsOcean == 1) {
+    float foamNoise = texture2D(uWaveTexture, vWorldPosition.xz * 0.42 + vec2(uTime * 0.03, -uTime * 0.14)).r;
+    float edgeWash = (1.0 - smoothstep(0.12, 1.9, vert_depth)) * canShowBottom;
+    float lace = smoothstep(0.40, 0.61, foamNoise) * edgeWash;
+    float caps = smoothstep(0.42, 0.74, vWave) * smoothstep(0.52, 0.7, foamNoise) * uOceanFoamCrests;
+    color = mix(color, uFoamColor * mix(0.15, 1.0, uDayFactor), clamp(lace * 0.88 + caps * 0.72, 0.0, 0.92));
+  }
   gl_FragColor = vec4(color, 1.0);
 }
 `;

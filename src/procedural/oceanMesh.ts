@@ -40,29 +40,25 @@ export function generateProceduralOcean(
 
   const seed = oceanParams.oceanSeed ?? 8888;
   const noise = new SimplexNoise(seed);
-  const terrainSize = 140;
-  const segments = 128;
+  const terrainSize = 260;
+  const segments = 200;
   const waterLevel = 0.0;
 
   // Linha da praia / costa: Z próximo de -35, com o oceano se abrindo para Z positivo (+Z = mar aberto infinito)
   const coastZ = -30.0;
+  const shoreline = (x: number) => coastZ + Math.sin(x * 0.045) * 6 + Math.sin(x * 0.105 + 1.3) * 2.5;
+  const seeded = (i: number) => {const n=Math.sin(i*127.1+seed)*43758.5453; return n-Math.floor(n);};
 
   function getTerrainHeight(x: number, z: number): number {
-    const coastDist = z - coastZ;
+    const coastDist = z - shoreline(x);
 
-    // Costa / Terra firme (Z < coastZ)
     if (coastDist < 0) {
-      const landDist = -coastDist;
-      const dunes = noise.noise2D(x * 0.04, z * 0.04) * 2.5;
-      const cliffs = Math.pow(Math.min(1.0, landDist / 35.0), 1.6) * 7.5;
-      const micro = noise.noise2D(x * 0.15, z * 0.15) * 0.5;
-      return 0.2 + dunes + cliffs + micro;
-    } else {
-      // Praia suave que mergulha no leito submarino profundo
-      const slope = -Math.pow(coastDist / 45.0, 1.3) * 14.0;
-      const submarineReef = noise.noise2D(x * 0.03, z * 0.03) * 1.8;
-      return Math.max(-16.0, slope + submarineReef);
+      const inland = -coastDist;
+      const dunes = noise.noise2D(x*0.04,z*0.04)*Math.min(1.5,inland*0.09);
+      const hills = Math.pow(Math.min(1,inland/65),1.6)*15;
+      return inland*0.09 + hills * (0.65 + 0.35 * noise.fbm(x*0.022,z*0.025,3,0.5)) + dunes;
     }
+    return -Math.min(24,coastDist*0.22 + coastDist*coastDist*0.002) + noise.noise2D(x*0.08,z*0.08)*Math.min(0.7,coastDist*0.04);
   }
 
   // 1. Terreno Costeiro & Leito Marinho
@@ -86,7 +82,7 @@ export function generateProceduralOcean(
     posAttr.setY(i, y);
 
     let vColor = sandColor.clone();
-    const coastDist = z - coastZ;
+    const coastDist = z - shoreline(x);
 
     if (coastDist > 0) {
       // Submerso no oceano
@@ -130,13 +126,13 @@ export function generateProceduralOcean(
   terrainMesh.castShadow = true;
 
   // 2. Malha Vasta de Água Oceânica (Ampla extensão que atinge o horizonte)
-  const oceanSize = 220;
-  const oceanWaterGeo = new THREE.PlaneGeometry(oceanSize, oceanSize, 120, 120);
+  const oceanSize = 520;
+  const oceanWaterGeo = new THREE.PlaneGeometry(oceanSize, oceanSize, 240, 240);
   oceanWaterGeo.rotateX(-Math.PI / 2);
 
   const waterMesh = new THREE.Mesh(oceanWaterGeo, waterMaterial);
   waterMesh.name = 'ProceduralOceanWater';
-  waterMesh.position.set(0, waterLevel, 20); // expande em direção ao mar aberto (+Z)
+  waterMesh.position.set(0, waterLevel, 40); // expande em direção ao mar aberto (+Z)
   waterMesh.receiveShadow = true;
 
   // 3. Rochas Costeiras / Penedos Marítimos que quebram as ondas
@@ -152,22 +148,22 @@ export function generateProceduralOcean(
   });
 
   const rockObstacles: RiverRockObstacle[] = [];
-  const reefCount = 14;
+  const reefCount = 42;
 
   for (let i = 0; i < reefCount; i++) {
-    const rx = (i / (reefCount - 1) - 0.5) * 90.0 + (noise.noise2D(i * 2.3, seed) * 4.0);
-    const rz = coastZ + 4.0 + Math.abs(noise.noise2D(i * 1.8, seed * 1.5)) * 14.0;
+    const rx = (i / (reefCount - 1) - 0.5) * 215.0 + (noise.noise2D(i * 2.3, seed) * 4.0);
+    const rz = shoreline(rx) - 3.0 + Math.abs(noise.noise2D(i * 1.8, seed * 1.5)) * 14.0;
     const ry = getTerrainHeight(rx, rz);
 
     const rock = new THREE.Mesh(rockGeoBase, rockMat);
     const rScale = 1.0 + Math.abs(noise.noise2D(rx * 0.3, rz * 0.3)) * 2.2;
     rock.scale.set(
-      rScale * (0.8 + Math.random() * 0.4),
-      rScale * (1.1 + Math.random() * 0.6),
-      rScale * (0.8 + Math.random() * 0.4)
+      rScale * (0.8 + seeded(i * 11 + 2) * 0.4),
+      rScale * (1.1 + seeded(i * 11 + 2) * 0.6),
+      rScale * (0.8 + seeded(i * 11 + 2) * 0.4)
     );
     rock.position.set(rx, ry + rScale * 0.35, rz);
-    rock.rotation.set(Math.random() * 0.4, Math.random() * Math.PI, Math.random() * 0.4);
+    rock.rotation.set(seeded(i * 11 + 2) * 0.4, seeded(i * 11 + 2) * Math.PI, seeded(i * 11 + 2) * 0.4);
     rock.castShadow = true;
     rock.receiveShadow = true;
     rocksGroup.add(rock);
@@ -186,7 +182,7 @@ export function generateProceduralOcean(
   physicsManager.setObstacles(rockObstacles);
 
   const ducks: { group: THREE.Group }[] = [];
-  const duckCount = Math.max(1, config.duckCount ?? 2);
+  const duckCount = Math.max(0, config.duckCount ?? 2);
 
   for (let i = 0; i < duckCount; i++) {
     const px = (i - (duckCount - 1) * 0.5) * 8.0;
@@ -239,7 +235,7 @@ export function generateProceduralOcean(
       oceanWaterGeo.dispose();
       rockGeoBase.dispose();
       rockMat.dispose();
-      physicsManager.clearUserSpawnedObjects();
+      physicsManager.dispose();
     },
   };
 }

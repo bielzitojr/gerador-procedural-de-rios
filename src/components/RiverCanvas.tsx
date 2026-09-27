@@ -1,3 +1,4 @@
+import { generateWaterPreview } from '../procedural/waterPreview';
 import { FirstPersonCamera } from './FirstPersonCamera';
 import { generateSpecialEnvironment, isSpecialEnvironment } from '../procedural/specialEnvironments';
 import React, { useEffect, useRef } from 'react';
@@ -447,6 +448,7 @@ export const RiverCanvas: React.FC<RiverCanvasProps> = ({
 
       // Rain System updates
       if (rainSystemRef.current) {
+        rainSystemRef.current.group.visible = configRef.current.waterMode !== 'water';
         rainSystemRef.current.update(delta, elapsed, (x, z, r, s) => {
           rippleSim.addRipple(x, z, r, s);
         });
@@ -490,13 +492,14 @@ export const RiverCanvas: React.FC<RiverCanvasProps> = ({
         intensity: 0.0,
       };
       if (npcRef.current) {
+        npcRef.current.group.visible = configRef.current.waterMode !== 'water';
         npcRef.current.update(delta, elapsed);
         torchData = npcRef.current.getTorchData();
       }
 
       // Sistema de Poças de Água pelo Mapa
       if (puddlesRef.current && currentCelState) {
-        puddlesRef.current.group.visible = true;
+        puddlesRef.current.group.visible = configRef.current.waterMode !== 'water';
         puddlesRef.current.update(
           elapsed,
           currentCelState.skyHorizonColor,
@@ -617,6 +620,15 @@ export const RiverCanvas: React.FC<RiverCanvasProps> = ({
     }
   }, [config.waterMode]);
 
+  useEffect(() => {
+    if (cameraModeRef.current === 'first_person' || !cameraRef.current || !controlsRef.current) return;
+    if (config.waterMode === 'ocean') {
+      cameraRef.current.position.set(58,22,27);controlsRef.current.target.set(0,0,-27);controlsRef.current.update();
+    } else if (config.waterMode === 'water') {
+      cameraRef.current.position.set(18,16,24);controlsRef.current.target.set(0,0,0);controlsRef.current.update();
+    }
+  }, [config.waterMode]);
+
   // Update water body procedural generation when config changes
   useEffect(() => {
     if (!sceneRef.current || !waterMaterialRef.current) return;
@@ -633,7 +645,9 @@ export const RiverCanvas: React.FC<RiverCanvasProps> = ({
 
     // Build procedural environment according to active waterMode
     let waterData: RiverData | LakeData | OceanData | PuddlesData;
-    if (isSpecialEnvironment(config.waterMode)) {
+    if (config.waterMode === 'water') {
+      waterData = generateWaterPreview(waterMaterialRef.current);
+    } else if (isSpecialEnvironment(config.waterMode)) {
       waterData = generateSpecialEnvironment(config, waterMaterialRef.current);
     } else if (config.waterMode === 'lake') {
       waterData = generateProceduralLake(config, waterMaterialRef.current);

@@ -1,0 +1,13 @@
+import assert from 'node:assert/strict';
+import * as THREE from 'three';
+import { generateWaterPreview } from '../src/procedural/waterPreview';
+import { generateProceduralOcean } from '../src/procedural/oceanMesh';
+import type { RiverConfig } from '../src/types';
+const material=new THREE.ShaderMaterial();
+const preview=generateWaterPreview(material);
+assert.equal(preview.terrainMesh.visible,false);assert.equal(preview.rocksGroup.children.length,0);assert.equal(preview.objectsGroup.children.length,0);assert.equal(preview.waterMesh.material,material);preview.dispose();
+const config={ocean:{oceanSeed:8888},duckCount:0} as RiverConfig;
+const a=generateProceduralOcean(config,material),b=generateProceduralOcean(config,material);
+assert.equal(a.ducks.length,0);assert.deepEqual(a.rocksGroup.children.map(x=>x.matrix.elements),b.rocksGroup.children.map(x=>x.matrix.elements));
+assert.deepEqual(a.rocksGroup.children.map(x=>[...x.position.toArray(),...x.scale.toArray()]),b.rocksGroup.children.map(x=>[...x.position.toArray(),...x.scale.toArray()]));
+assert.ok(Array.from(a.terrainMesh.geometry.attributes.position.array).every(Number.isFinite));a.dispose();b.dispose();material.dispose();console.log('PASS isolated water and deterministic coastline');

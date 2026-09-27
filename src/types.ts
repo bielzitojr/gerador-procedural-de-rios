@@ -119,4 +119,4 @@ export interface WaterPalette {
 }
 
 export type ViewMode = 'river';
-export type CameraMode = 'orbit' | 'follow_duck' | 'top_down';
+export type CameraMode = 'orbit' | 'follow_duck' | 'top_down' | 'first_person';

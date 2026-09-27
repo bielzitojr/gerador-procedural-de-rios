@@ -173,6 +173,10 @@ export default function App() {
         onRandomizeSeed={handleRandomizeSeed}
       />
 
+      <div className="absolute bottom-14 right-4 z-30 flex flex-col items-end gap-2">
+        <button id="first-person-toggle" onClick={() => setCameraMode(cameraMode === 'first_person' ? 'orbit' : 'first_person')} className="rounded-lg bg-slate-900/90 border border-cyan-500/50 text-cyan-200 px-4 py-2 text-sm">{cameraMode === 'first_person' ? 'Sair da primeira pessoa' : 'Explorar em primeira pessoa'}</button>
+        {cameraMode === 'first_person' && <div className="rounded-lg bg-slate-950/90 p-3 text-xs text-slate-200 max-w-72"><p>WASD / setas: mover · Shift: acelerar<br />Arraste a cena para olhar ao redor.</p><div className="flex gap-2 mt-2">{[['KeyA','←'],['KeyW','↑'],['KeyS','↓'],['KeyD','→']].map(([key,label]) => <button key={key} aria-label={'Mover ' + label} className="bg-slate-700 rounded p-3 touch-none" onPointerDown={e=>{e.currentTarget.setPointerCapture(e.pointerId); window.dispatchEvent(new CustomEvent('explorer-move',{detail:{key,down:true}}));}} onPointerUp={()=>window.dispatchEvent(new CustomEvent('explorer-move',{detail:{key,down:false}}))} onPointerCancel={()=>window.dispatchEvent(new CustomEvent('explorer-move',{detail:{key,down:false}}))}>{label}</button>)}</div></div>}
+      </div>
       {/* Top Right Quick Actions Bar */}
       <div className="absolute top-4 right-4 z-20 flex items-center gap-2">
         {/* Quick Day / Sunset / Night Toggle Pill */}

@@ -16,6 +16,12 @@ export function createWaterfallMaterial(source: THREE.ShaderMaterial, vertical: 
     'gl_FragColor = vec4(color, 1.0);',
     `float cascadeCloud = smoothstep(0.40, 0.69, organicWash);
      color = mix(color, mix(uSurfaceColor, uFoamColor, 0.38) * mix(0.18, 1.0, uDayFactor), cascadeCloud * ${vertical ? '0.62' : '0.40'});
+     ${vertical ? `float fallMask = smoothstep(0.12, 0.35, vUv.y);
+     vec2 filamentUv = vec2(vCascadeCoord.x * 0.38, vCascadeCoord.y * 0.065 - uTime * 0.95);
+     float filament = texture2D(uWaveTexture, filamentUv + vec2(organicWash * 0.18, 0.0)).r;
+     float lace = smoothstep(0.55, 0.78, filament) * fallMask;
+     float impact = smoothstep(0.76, 1.0, vUv.y);
+     color = mix(color, uFoamColor * mix(0.18, 1.0, uDayFactor), clamp(lace * 0.72 + impact * cascadeCloud * 0.65, 0.0, 0.88));` : ''}
      gl_FragColor = vec4(color, 1.0);`
   );
   if (vertical) {
@@ -53,7 +59,7 @@ export function createWaterfallGeometry(width: number, height: number, radius: n
     const widthFactor = 1 + 0.045 * Math.sin(t * 12 + seed) + 0.09 * t * t;
     for (let j = 0; j <= columns; j++) {
       const u = j / columns, x = (u - 0.5) * width * widthFactor;
-      positions.push(x, point.y, point.z + Math.sin(u * 15 + t * 9 + seed) * 0.12 * Math.sin(t * Math.PI));
+      positions.push(x, point.y, point.z + Math.sin(u * 15 + t * 9 + seed) * 0.32 * Math.sin(t * Math.PI));
       uvs.push(u, t);
       coords.push(x, lipZ - radius * 0.65 + t * length);
       if (i < rows && j < columns) {

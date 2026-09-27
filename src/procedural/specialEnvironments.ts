@@ -1,3 +1,4 @@
+import { createWaterfallImpact } from './waterfallImpact';
 import { createWaterfallMaterial, createWaterfallGeometry } from './waterfallSurface';
 import * as THREE from 'three';
 import { RiverConfig, WaterBodyType } from '../types';
@@ -51,6 +52,8 @@ export function generateSpecialEnvironment(config: RiverConfig, waterMaterial: T
   const waterMesh = new THREE.Mesh(waterGeo, basinMaterial);
   waterMesh.renderOrder = 1;
   const rocksGroup = new THREE.Group();
+  const impact = waterfall ? createWaterfallImpact(radius * 0.55, radius, p.density, waterMaterial) : null;
+  if (impact) waterMesh.add(impact.group);
   const materials = new Set<THREE.Material>();
   const geometries = new Set<THREE.BufferGeometry>();
   if (waterfall) materials.add(basinMaterial);
@@ -134,6 +137,7 @@ export function generateSpecialEnvironment(config: RiverConfig, waterMaterial: T
   const getDistanceToRiver = (x: number, z: number) => ({ distance: Math.abs(x - centerX(z)), riverY: 0, t: THREE.MathUtils.clamp(z / (radius * 1.4) + 0.5, 0, 1) });
   const physicsManager = new RiverPhysicsManager();
   const update: RiverData['update'] = (time, delta, ripple) => {
+    impact?.update(time * p.intensity);
     // All water surfaces share the original live uniforms updated by RiverCanvas.
     for (const drop of falling) {
       const previous = drop.mesh.position.y;
@@ -144,5 +148,5 @@ export function generateSpecialEnvironment(config: RiverConfig, waterMaterial: T
     }
     physicsManager.update(time, delta, config, curve, getDistanceToRiver, getTerrainHeight, ripple);
   };
-  return { terrainMesh, waterMesh, rocksGroup, objectsGroup: physicsManager.container, physicsManager, ducks: [], curve, getTerrainHeight, getDistanceToRiver, update, dispose: () => { physicsManager.dispose(); terrainGeo.dispose(); terrainMat.dispose(); waterGeo.dispose(); geometries.forEach(g => g.dispose()); materials.forEach(m => m.dispose()); } };
+  return { terrainMesh, waterMesh, rocksGroup, objectsGroup: physicsManager.container, physicsManager, ducks: [], curve, getTerrainHeight, getDistanceToRiver, update, dispose: () => { impact?.dispose(); physicsManager.dispose(); terrainGeo.dispose(); terrainMat.dispose(); waterGeo.dispose(); geometries.forEach(g => g.dispose()); materials.forEach(m => m.dispose()); } };
 }

@@ -1,3 +1,4 @@
+import { FirstPersonCamera } from './FirstPersonCamera';
 import { generateSpecialEnvironment, isSpecialEnvironment } from '../procedural/specialEnvironments';
 import React, { useEffect, useRef } from 'react';
 import * as THREE from 'three';
@@ -102,6 +103,7 @@ export const RiverCanvas: React.FC<RiverCanvasProps> = ({
     controls.maxDistance = 150;
     controls.target.set(0, 0, 0);
     controlsRef.current = controls;
+    const explorer = new FirstPersonCamera(camera, renderer.domElement);
 
     // 5. Celestial Cycle System (Realistic Day / Night celestial rotation, sun, moon, stars & lighting)
     const celestialCycle = new CelestialCycle();
@@ -320,6 +322,7 @@ export const RiverCanvas: React.FC<RiverCanvasProps> = ({
     };
 
     const onPointerDown = (e: PointerEvent) => {
+      if (cameraModeRef.current === 'first_person') return;
       if (e.button === 0) {
         isInteracting = true;
         handlePointerAction(e, true);
@@ -526,7 +529,9 @@ export const RiverCanvas: React.FC<RiverCanvasProps> = ({
         waterMaterialRef.current.uniforms.uTorchIntensity.value = torchData.intensity;
       }
 
-      controls.update();
+      controls.enabled = cameraModeRef.current !== 'first_person';
+      explorer.update(cameraModeRef.current === 'first_person', delta, riverDataRef.current?.getTerrainHeight);
+      if (controls.enabled) controls.update();
 
       // Two-pass rendering for depth-based contact foam:
       // Pass 1: Render opaque scene into depth target (hide water surface temporarily)
@@ -587,6 +592,7 @@ export const RiverCanvas: React.FC<RiverCanvasProps> = ({
       puddles.dispose();
       riverDataRef.current?.dispose();
       waterMaterialRef.current?.dispose();
+      explorer.dispose();
       controls.dispose();
       renderer.dispose();
       depthTarget.dispose();
@@ -597,7 +603,7 @@ export const RiverCanvas: React.FC<RiverCanvasProps> = ({
   }, []);
 
   useEffect(() => {
-    if (isSpecialEnvironment(config.waterMode) && cameraRef.current && controlsRef.current) {
+    if (cameraModeRef.current !== 'first_person' && isSpecialEnvironment(config.waterMode) && cameraRef.current && controlsRef.current) {
       cameraRef.current.position.set(38, 32, 48);
       controlsRef.current.target.set(0, 4, 0);
       controlsRef.current.update();

@@ -1,3 +1,4 @@
+import { SPECIAL_ENVIRONMENTS, isSpecialEnvironment, SpecialMode } from '../procedural/specialEnvironments';
 import React, { useState } from 'react';
 import {
   Sparkles,
@@ -138,6 +139,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
     WaterBodyType,
     { title: string; subtitle: string; icon: React.ReactNode; color: string }
   > = {
+    ...Object.fromEntries(Object.entries(SPECIAL_ENVIRONMENTS).map(([key, value]) => [key, { title: value.label, subtitle: value.description, icon: <Mountain className="w-5 h-5 text-cyan-300" />, color: 'bg-cyan-500/20 border-cyan-400/40 text-cyan-300' }])) as Record<SpecialMode, { title: string; subtitle: string; icon: React.ReactNode; color: string }>,
     water: {
       title: 'Água Toon',
       subtitle: 'Shader Godot & Refração Translúcida',
@@ -218,6 +220,7 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
               Ambientes & Elementos Aquáticos
             </span>
             <div className="grid grid-cols-3 gap-1 bg-slate-950/60 p-1 rounded-lg border border-slate-800">
+              {Object.entries(SPECIAL_ENVIRONMENTS).map(([key, item]) => <button key={key} id={'tab-' + key} title={item.description} aria-pressed={activeTab === key} onClick={() => setWaterMode(key as SpecialMode)} className={`py-2 px-1 rounded-md text-[10px] flex flex-col items-center gap-1 transition-colors ${activeTab === key ? 'bg-cyan-500 text-slate-950 font-semibold' : 'text-slate-300 hover:bg-slate-800'}`}><Mountain className="w-4 h-4" /><span>{item.label}</span></button>)}
               {/* 1. Água (Shader) */}
               <button
                 id="tab-water"
@@ -310,6 +313,19 @@ export const ControlPanel: React.FC<ControlPanelProps> = ({
             </div>
           </div>
 
+
+          {isSpecialEnvironment(activeTab) && <section className="space-y-4 border border-cyan-800/50 rounded-lg p-3 bg-slate-950/40">
+            <button onClick={onRandomizeSeed} className="w-full rounded-md bg-cyan-500 text-slate-950 text-xs font-semibold py-2">Gerar novo ambiente</button>
+            <p className="text-xs text-slate-400">{SPECIAL_ENVIRONMENTS[activeTab].description}. Semente: {config.seed}. Cavernas e fossas exibidas em corte para explorar o interior.</p>
+            {([
+              ['scale', 'Extensão do ambiente', 12, 32, 1, 'm'],
+              ['height', 'Altura da queda / galeria', 6, 28, 1, 'm'],
+              ['depth', 'Profundidade da bacia', 3, 26, 1, 'm'],
+              ['density', 'Formações e partículas', 8, 48, 1, ''],
+              ['intensity', 'Intensidade da água', 0.2, 2.5, 0.1, '×'],
+            ] as const).map(([key, label, min, max, step, suffix]) => <label key={key} className="block text-xs text-slate-300"><span className="flex justify-between mb-2"><span>{label}</span><span className="text-cyan-300">{config.environment[key]}{suffix}</span></span><input className="w-full accent-cyan-400" type="range" min={min} max={max} step={step} value={config.environment[key]} onChange={e => update('environment', {...config.environment, [key]: Number(e.target.value)})} /></label>)}
+            {activeTab === 'waterfall' && <label className="flex gap-2 text-xs"><input type="checkbox" checked={config.environment.rainbow} onChange={e => update('environment', {...config.environment, rainbow: e.target.checked})} />Arco-íris na cachoeira</label>}
+          </section>}
           {/* ========================================================================= */}
           {/* ABA 1: ÁGUA (Shader Toon, Cores, Translucidez, Caustics e Espuma) */}
           {/* ========================================================================= */}

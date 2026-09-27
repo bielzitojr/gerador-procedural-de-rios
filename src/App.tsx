@@ -17,6 +17,7 @@ import {
 
 const INITIAL_CONFIG: RiverConfig = {
   waterMode: 'river',
+  environment: { scale: 22, height: 16, depth: 12, density: 24, intensity: 1, rainbow: true },
 
   // 1. Rio Procedural
   seed: 1337,
@@ -312,7 +313,7 @@ export default function App() {
         <div className="bg-slate-900/80 backdrop-blur-md border border-slate-700/60 px-4 py-1.5 rounded-full shadow-xl flex items-center gap-2.5 text-xs text-slate-200">
           <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
           <span className="font-medium">
-            Rio Procedural • Semente: {config.seed} • {config.duckCount} Patinhos
+            Ambiente Aquático • Semente: {config.seed} • {config.duckCount} Patinhos
           </span>
           <span className="text-slate-500">|</span>
           <span className="text-cyan-300 text-[11px]">

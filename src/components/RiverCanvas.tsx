@@ -1,3 +1,4 @@
+import { generateSpecialEnvironment, isSpecialEnvironment } from '../procedural/specialEnvironments';
 import React, { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
@@ -584,6 +585,9 @@ export const RiverCanvas: React.FC<RiverCanvasProps> = ({
       celestialCycle.dispose();
       npc.dispose();
       puddles.dispose();
+      riverDataRef.current?.dispose();
+      waterMaterialRef.current?.dispose();
+      controls.dispose();
       renderer.dispose();
       depthTarget.dispose();
       if (container.contains(renderer.domElement)) {
@@ -591,6 +595,14 @@ export const RiverCanvas: React.FC<RiverCanvasProps> = ({
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (isSpecialEnvironment(config.waterMode) && cameraRef.current && controlsRef.current) {
+      cameraRef.current.position.set(38, 32, 48);
+      controlsRef.current.target.set(0, 4, 0);
+      controlsRef.current.update();
+    }
+  }, [config.waterMode]);
 
   // Update water body procedural generation when config changes
   useEffect(() => {
@@ -608,7 +620,9 @@ export const RiverCanvas: React.FC<RiverCanvasProps> = ({
 
     // Build procedural environment according to active waterMode
     let waterData: RiverData | LakeData | OceanData | PuddlesData;
-    if (config.waterMode === 'lake') {
+    if (isSpecialEnvironment(config.waterMode)) {
+      waterData = generateSpecialEnvironment(config, waterMaterialRef.current);
+    } else if (config.waterMode === 'lake') {
       waterData = generateProceduralLake(config, waterMaterialRef.current);
     } else if (config.waterMode === 'ocean') {
       waterData = generateProceduralOcean(config, waterMaterialRef.current);
@@ -646,6 +660,7 @@ export const RiverCanvas: React.FC<RiverCanvasProps> = ({
   }, [
     config.waterMode,
     config.seed,
+    config.environment,
     config.meander,
     config.riverWidth,
     config.depth,

@@ -1,6 +1,6 @@
 export type TimeOfDay = 'day' | 'sunset' | 'night';
 
-export type WaterBodyType = 'water' | 'river' | 'lake' | 'ocean' | 'puddles' | 'rain';
+export type WaterBodyType = 'water' | 'river' | 'lake' | 'ocean' | 'puddles' | 'rain' | 'waterfall' | 'aquatic_cave' | 'rainbow' | 'grotto' | 'trench' | 'underground_river' | 'drips';
 
 // Variantes de Ondas para Praias e Mares
 export type WaveVariant = 'leve' | 'agitado' | 'tempestade';
@@ -51,6 +51,7 @@ export interface OceanConfig {
 }
 
 export interface RiverConfig {
+  environment: { scale: number; height: number; depth: number; density: number; intensity: number; rainbow: boolean };
   // Aba ativa e ambiente aquático selecionado
   waterMode: WaterBodyType;
 

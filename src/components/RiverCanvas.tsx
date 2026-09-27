@@ -10,6 +10,9 @@ import {
   generateFoamTexture,
 } from '../shaders/proceduralTextures';
 import { generateProceduralRiver, RiverData } from '../procedural/riverMesh';
+import { generateProceduralLake, LakeData } from '../procedural/lakeMesh';
+import { generateProceduralOcean, OceanData } from '../procedural/oceanMesh';
+import { generateProceduralPuddles, PuddlesData } from '../procedural/puddlesMesh';
 import { WaterRippleSimulation } from '../physics/waterRippleSimulation';
 import { RainSystem } from './RainSystem';
 import { CelestialCycle } from './CelestialCycle';
@@ -41,7 +44,7 @@ export const RiverCanvas: React.FC<RiverCanvasProps> = ({
   const timeHourRef = useRef<number>(config.timeHour ?? 11.5);
 
   const waterMaterialRef = useRef<THREE.ShaderMaterial | null>(null);
-  const riverDataRef = useRef<RiverData | null>(null);
+  const riverDataRef = useRef<RiverData | LakeData | OceanData | PuddlesData | null>(null);
   const rippleSimRef = useRef<WaterRippleSimulation | null>(null);
   const rainSystemRef = useRef<RainSystem | null>(null);
 
@@ -105,7 +108,7 @@ export const RiverCanvas: React.FC<RiverCanvasProps> = ({
     scene.add(celestialCycle.group);
 
     // 6. Ripple Physics Simulation (covers full 130x130 river terrain domain)
-    const rippleSim = new WaterRippleSimulation(256, 130, 130);
+    const rippleSim = new WaterRippleSimulation(384, 130, 130);
     rippleSimRef.current = rippleSim;
 
     // 7. Depth Render Target for Contact Foam (Scaled to physical drawing buffer for all devices)
@@ -155,6 +158,11 @@ export const RiverCanvas: React.FC<RiverCanvasProps> = ({
         uCausticsStrength: { value: 2.2 },
         uCausticsScale: { value: new THREE.Vector2(config.causticScale * 0.35, config.causticScale * 0.35) },
 
+        uTranslucency: { value: 0.85 },
+        uStylizedFoamAmount: { value: 0.85 },
+        uHighlightIntensity: { value: 0.90 },
+        uWakeSoftness: { value: 1.0 },
+
         uEdgeFoamDepthSize: { value: Math.max(0.08, config.foamWidth * 0.35) },
         uWaveFoamAmount: { value: 0.0 },
         uFoamStart: { value: 0.12 },
@@ -175,9 +183,34 @@ export const RiverCanvas: React.FC<RiverCanvasProps> = ({
         uRippleWorldSize: { value: rippleSim.worldSize },
         uRippleIntensity: { value: config.rippleIntensity },
 
+        // Rain & Weather uniforms
+        uRainIntensity: { value: config.isRaining ? (config.rainIntensity ?? 1.0) : 0.0 },
+
+        // Águas Calmas & Ondas para Praias e Mares
+        uIsCalmWater: { value: config.isCalmWater ? 1 : 0 },
+        uCalmWaterIntensity: { value: config.calmWaterIntensity ?? 1.0 },
+        uIsOcean: { value: config.waterMode === 'ocean' ? 1 : 0 },
+        uWaveVariant: {
+          value:
+            config.ocean?.waveVariant === 'tempestade'
+              ? 2
+              : config.ocean?.waveVariant === 'agitado'
+              ? 1
+              : 0,
+        },
+        uOceanSwellHeight: { value: config.ocean?.oceanSwellHeight ?? 1.6 },
+        uOceanWaveLength: { value: config.ocean?.oceanWaveLength ?? 22.0 },
+        uOceanChoppiness: { value: config.ocean?.oceanChoppiness ?? 1.0 },
+        uOceanSpeed: { value: config.ocean?.oceanSpeed ?? 1.2 },
+        uOceanFoamCrests: { value: config.ocean?.oceanFoamCrests ?? 0.8 },
+
         // Dynamic lighting uniforms
         uSunLightDir: { value: new THREE.Vector3(-0.4, 0.88, -0.4).normalize() },
         uSunLightColor: { value: new THREE.Color('#ffffff') },
+        uSunIntensity: { value: 1.6 },
+        uAmbientLightColor: { value: new THREE.Color('#ddeeff') },
+        uAmbientIntensity: { value: 1.35 },
+        uDayFactor: { value: 1.0 },
         uAmbientBoost: { value: 1.0 },
 
         // Sky reflection uniforms
@@ -335,10 +368,10 @@ export const RiverCanvas: React.FC<RiverCanvasProps> = ({
         if (customEvent.detail?.x !== undefined && customEvent.detail?.z !== undefined) {
           const x = customEvent.detail.x;
           const z = customEvent.detail.z;
-          const rInfo = riverDataRef.current.getDistanceToRiver(x, z);
-          spawnPos = new THREE.Vector3(x, rInfo.riverY + (customEvent.detail.dropFromHeight ? 5.5 : 0.2), z);
-        } else {
-          // Solta do alto do céu no rio (~5 metros acima da água) para ver a gravidade e o splash
+          const y = (riverDataRef.current as any).getDistanceToRiver?.(x, z)?.riverY ?? 0.0;
+          spawnPos = new THREE.Vector3(x, y + (customEvent.detail.dropFromHeight ? 5.5 : 0.2), z);
+        } else if (curve) {
+          // Solta do alto do céu no corpo d'água (~5 metros acima da água) para ver a gravidade e o splash
           const t = 0.15;
           const cp = curve.getPoint(t);
           const tan = curve.getTangent(t).normalize();
@@ -346,6 +379,8 @@ export const RiverCanvas: React.FC<RiverCanvasProps> = ({
           const lateral = (Math.random() - 0.5) * (configRef.current.riverWidth * 0.4);
           spawnPos = cp.clone().add(side.multiplyScalar(lateral));
           spawnPos.y = cp.y + (customEvent.detail?.dropFromHeight !== false ? 5.5 : 0.2);
+        } else {
+          spawnPos = new THREE.Vector3(0, 5.5, 0);
         }
 
         const initialVel = new THREE.Vector3(0, customEvent.detail?.dropFromHeight !== false ? -1.5 : 0, 0);
@@ -383,6 +418,9 @@ export const RiverCanvas: React.FC<RiverCanvasProps> = ({
           },
           (x, z, dx, dz, spd, st, objId) => {
             rippleSimRef.current?.addWake(x, z, dx, dz, spd, st, objId);
+          },
+          (objId) => {
+            rippleSimRef.current?.clearWake(objId);
           }
         );
 
@@ -467,10 +505,17 @@ export const RiverCanvas: React.FC<RiverCanvasProps> = ({
         waterMaterialRef.current.uniforms.uInvProjectionMatrix.value.copy(camera.projectionMatrixInverse);
         waterMaterialRef.current.uniforms.uInvViewMatrix.value.copy(camera.matrixWorld);
         waterMaterialRef.current.uniforms.uRippleIntensity.value = configRef.current.rippleIntensity;
+        waterMaterialRef.current.uniforms.uRainIntensity.value = configRef.current.isRaining
+          ? (configRef.current.rainIntensity ?? 1.0)
+          : 0.0;
 
         if (currentCelState) {
           waterMaterialRef.current.uniforms.uSunLightDir.value.copy(currentCelState.sunDirection);
           waterMaterialRef.current.uniforms.uSunLightColor.value.copy(currentCelState.sunColor);
+          waterMaterialRef.current.uniforms.uSunIntensity.value = currentCelState.sunIntensity;
+          waterMaterialRef.current.uniforms.uAmbientLightColor.value.copy(currentCelState.ambientColor);
+          waterMaterialRef.current.uniforms.uAmbientIntensity.value = currentCelState.ambientIntensity;
+          waterMaterialRef.current.uniforms.uDayFactor.value = currentCelState.dayFactor;
           waterMaterialRef.current.uniforms.uSkyHorizonColor.value.copy(currentCelState.skyHorizonColor);
           waterMaterialRef.current.uniforms.uSkyZenithColor.value.copy(currentCelState.skyZenithColor);
         }
@@ -547,12 +592,12 @@ export const RiverCanvas: React.FC<RiverCanvasProps> = ({
     };
   }, []);
 
-  // Update river generation when config changes
+  // Update water body procedural generation when config changes
   useEffect(() => {
     if (!sceneRef.current || !waterMaterialRef.current) return;
 
     const riverGroup = riverGroupRef.current;
-    // Clear old river
+    // Clear old water environment
     while (riverGroup.children.length > 0) {
       riverGroup.remove(riverGroup.children[0]);
     }
@@ -561,29 +606,45 @@ export const RiverCanvas: React.FC<RiverCanvasProps> = ({
       riverDataRef.current = null;
     }
 
-    // Build new procedural river
-    const riverData = generateProceduralRiver(config, waterMaterialRef.current);
-    riverDataRef.current = riverData;
-
-    riverGroup.add(riverData.terrainMesh);
-    riverGroup.add(riverData.waterMesh);
-    riverGroup.add(riverData.rocksGroup);
-    riverGroup.add(riverData.objectsGroup);
-
-    // Conecta a rota do NPC e as poças com a nova curva e relevo do rio
-    if (npcRef.current && riverData.curve) {
-      npcRef.current.setupPath(riverData.curve, config.riverWidth, riverData.getTerrainHeight);
+    // Build procedural environment according to active waterMode
+    let waterData: RiverData | LakeData | OceanData | PuddlesData;
+    if (config.waterMode === 'lake') {
+      waterData = generateProceduralLake(config, waterMaterialRef.current);
+    } else if (config.waterMode === 'ocean') {
+      waterData = generateProceduralOcean(config, waterMaterialRef.current);
+    } else if (config.waterMode === 'puddles') {
+      waterData = generateProceduralPuddles(config, waterMaterialRef.current);
+    } else {
+      // 'river', 'water', 'rain'
+      waterData = generateProceduralRiver(config, waterMaterialRef.current);
     }
-    if (puddlesRef.current && riverData.curve) {
-      puddlesRef.current.generate(
-        riverData.curve,
-        config.riverWidth,
-        config.terrainRoughness,
-        config.seed,
-        riverData.getTerrainHeight
-      );
+    riverDataRef.current = waterData;
+
+    riverGroup.add(waterData.terrainMesh);
+    riverGroup.add(waterData.waterMesh);
+    riverGroup.add(waterData.rocksGroup);
+    riverGroup.add(waterData.objectsGroup);
+
+    // Conecta a rota do NPC e as poças com a nova curva e relevo
+    if (npcRef.current && waterData.curve) {
+      npcRef.current.setupPath(waterData.curve, config.riverWidth, waterData.getTerrainHeight);
+    }
+    if (puddlesRef.current) {
+      if (config.waterMode === 'river' && waterData.curve) {
+        puddlesRef.current.generate(
+          waterData.curve,
+          config.riverWidth,
+          config.terrainRoughness,
+          config.puddles?.puddleSeed ?? config.seed,
+          waterData.getTerrainHeight,
+          config.puddles
+        );
+      } else {
+        puddlesRef.current.dispose();
+      }
     }
   }, [
+    config.waterMode,
     config.seed,
     config.meander,
     config.riverWidth,
@@ -595,6 +656,9 @@ export const RiverCanvas: React.FC<RiverCanvasProps> = ({
     config.waterDensity,
     config.waterViscosity,
     config.rippleIntensity,
+    config.lake,
+    config.ocean,
+    config.puddles,
   ]);
 
   // Sincroniza a hora do ciclo astronômico com os presets de botões
@@ -615,6 +679,11 @@ export const RiverCanvas: React.FC<RiverCanvasProps> = ({
     if (rainSystemRef.current) {
       rainSystemRef.current.setConfig(config.isRaining, config.rainIntensity);
     }
+    if (waterMaterialRef.current) {
+      waterMaterialRef.current.uniforms.uRainIntensity.value = config.isRaining
+        ? (config.rainIntensity ?? 1.0)
+        : 0.0;
+    }
   }, [config.isRaining, config.rainIntensity]);
 
   // Update water material uniforms when shader config or palette changes
@@ -630,13 +699,84 @@ export const RiverCanvas: React.FC<RiverCanvasProps> = ({
     }
     mat.uniforms.uDisplacementAmount.value = 0.25 * config.waveHeight;
     mat.uniforms.uEdgeFoamDepthSize.value = Math.max(0.08, config.foamWidth * 0.35);
+    if (mat.uniforms.uStylizedFoamAmount) {
+      mat.uniforms.uStylizedFoamAmount.value = Math.min(1.5, Math.max(0.3, config.foamWidth * 2.0));
+    }
     mat.uniforms.uCausticsScale.value.set(config.causticScale * 0.35, config.causticScale * 0.35);
     mat.uniforms.uRippleIntensity.value = config.rippleIntensity;
 
     mat.uniforms.uSurfaceColor.value.set(palette.shallowColor);
     mat.uniforms.uDepthColor.value.set(palette.deepColor);
     mat.uniforms.uFoamColor.value.set(palette.foamColor);
+
+    if (mat.uniforms.uTranslucency && config.translucency !== undefined) {
+      mat.uniforms.uTranslucency.value = config.translucency;
+    }
+    if (mat.uniforms.uRefractionAmount && config.refractionAmount !== undefined) {
+      mat.uniforms.uRefractionAmount.value = config.refractionAmount;
+    }
+    if (mat.uniforms.uHighlightIntensity && config.highlightIntensity !== undefined) {
+      mat.uniforms.uHighlightIntensity.value = config.highlightIntensity;
+    }
+
+    // Adaptação suave para oceanos (ondas e swell), poças e lagos (águas calmas e paradas)
+    const isCalm = Boolean(
+      config.isCalmWater ||
+      (config.waterMode === 'puddles' && (config.puddles?.isCalmWater ?? true)) ||
+      (config.waterMode === 'lake' && (config.lake?.isCalmWater ?? true))
+    );
+
+    if (mat.uniforms.uIsCalmWater) {
+      mat.uniforms.uIsCalmWater.value = isCalm ? 1 : 0;
+    }
+    if (mat.uniforms.uCalmWaterIntensity) {
+      mat.uniforms.uCalmWaterIntensity.value = config.calmWaterIntensity ?? 1.0;
+    }
+
+    const isOcean = config.waterMode === 'ocean';
+    if (mat.uniforms.uIsOcean) {
+      mat.uniforms.uIsOcean.value = isOcean ? 1 : 0;
+    }
+
+    const waveVariantStr = config.ocean?.waveVariant || config.waveVariant || 'leve';
+    const waveVariantCode = waveVariantStr === 'tempestade' ? 2 : waveVariantStr === 'agitado' ? 1 : 0;
+    if (mat.uniforms.uWaveVariant) {
+      mat.uniforms.uWaveVariant.value = waveVariantCode;
+    }
+
+    if (config.ocean) {
+      if (mat.uniforms.uOceanSwellHeight) {
+        mat.uniforms.uOceanSwellHeight.value = config.ocean.oceanSwellHeight ?? 1.6;
+      }
+      if (mat.uniforms.uOceanWaveLength) {
+        mat.uniforms.uOceanWaveLength.value = config.ocean.oceanWaveLength ?? 22.0;
+      }
+      if (mat.uniforms.uOceanChoppiness) {
+        mat.uniforms.uOceanChoppiness.value = config.ocean.oceanChoppiness ?? 1.0;
+      }
+      if (mat.uniforms.uOceanSpeed) {
+        mat.uniforms.uOceanSpeed.value = config.ocean.oceanSpeed ?? 1.2;
+      }
+      if (mat.uniforms.uOceanFoamCrests) {
+        mat.uniforms.uOceanFoamCrests.value = config.ocean.oceanFoamCrests ?? 0.8;
+      }
+    }
+
+    if (isCalm) {
+      mat.uniforms.uFlowSpeed.value = 0.0;
+      if (mat.uniforms.uCurrentStrength) {
+        mat.uniforms.uCurrentStrength.value = 0.0;
+      }
+      mat.uniforms.uDisplacementAmount.value = 0.02;
+    } else if (config.waterMode === 'ocean') {
+      mat.uniforms.uDisplacementAmount.value = 0.35 * (config.ocean?.oceanSwellHeight ?? 1.6);
+      mat.uniforms.uFlowSpeed.value = config.ocean?.oceanSpeed ?? 1.2;
+    } else if (config.waterMode === 'lake') {
+      mat.uniforms.uDisplacementAmount.value = 0.15 * (1.2 / Math.max(0.5, config.lake?.lakeCalmness ?? 1.0));
+      mat.uniforms.uFlowSpeed.value = 0.25;
+    }
   }, [
+    config.waterMode,
     config.flowSpeed,
     config.currentStrength,
     config.waveHeight,
@@ -644,6 +784,21 @@ export const RiverCanvas: React.FC<RiverCanvasProps> = ({
     config.causticScale,
     config.paletteId,
     config.rippleIntensity,
+    config.translucency,
+    config.refractionAmount,
+    config.highlightIntensity,
+    config.isCalmWater,
+    config.calmWaterIntensity,
+    config.waveVariant,
+    config.ocean?.waveVariant,
+    config.ocean?.oceanSwellHeight,
+    config.ocean?.oceanWaveLength,
+    config.ocean?.oceanChoppiness,
+    config.ocean?.oceanSpeed,
+    config.ocean?.oceanFoamCrests,
+    config.lake?.lakeCalmness,
+    config.lake?.isCalmWater,
+    config.puddles?.isCalmWater,
   ]);
 
   // Handle Camera Mode changes

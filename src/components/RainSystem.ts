@@ -11,8 +11,8 @@ export class RainSystem {
   private splashParticles: THREE.Points;
   private splashPositions: Float32Array;
   private splashOpacities: Float32Array;
-  private splashScales: Float32Array;
-  private splashMax = 64;
+  private splashVelocitiesY: Float32Array;
+  private splashMax = 320;
   private nextSplashIdx = 0;
 
   private intensity: number = 1.0;
@@ -75,43 +75,52 @@ export class RainSystem {
     this.lineSegments.frustumCulled = false;
     this.group.add(this.lineSegments);
 
-    // 2. Water Surface Splashes (little droplet circles/bursts when hitting water)
+    // 2. Micro-splashes discretos na superfície da água
     const splashGeom = new THREE.BufferGeometry();
     this.splashPositions = new Float32Array(this.splashMax * 3);
     this.splashOpacities = new Float32Array(this.splashMax);
-    this.splashScales = new Float32Array(this.splashMax);
+    this.splashVelocitiesY = new Float32Array(this.splashMax);
 
     for (let s = 0; s < this.splashMax; s++) {
       this.splashPositions[s * 3] = 0;
-      this.splashPositions[s * 3 + 1] = -100; // hidden initially
+      this.splashPositions[s * 3 + 1] = -100; // escondido inicialmente
       this.splashPositions[s * 3 + 2] = 0;
       this.splashOpacities[s] = 0;
-      this.splashScales[s] = 0;
+      this.splashVelocitiesY[s] = 0;
     }
 
     splashGeom.setAttribute('position', new THREE.BufferAttribute(this.splashPositions, 3));
 
-    // Simple canvas texture for circular splash droplet
+    // Textura refinada para micro-splash (gotícula translúcida e anel sutil)
     const canvas = document.createElement('canvas');
     canvas.width = 32;
     canvas.height = 32;
     const ctx = canvas.getContext('2d')!;
-    const grad = ctx.createRadialGradient(16, 16, 0, 16, 16, 15);
-    grad.addColorStop(0, 'rgba(230, 245, 255, 0.95)');
-    grad.addColorStop(0.5, 'rgba(180, 220, 255, 0.5)');
-    grad.addColorStop(1, 'rgba(180, 220, 255, 0)');
+
+    // Anel externo sutil
+    ctx.strokeStyle = 'rgba(215, 245, 255, 0.45)';
+    ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    ctx.arc(16, 16, 11, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Gotícula central suave
+    const grad = ctx.createRadialGradient(16, 16, 0, 16, 16, 5);
+    grad.addColorStop(0, 'rgba(255, 255, 255, 0.95)');
+    grad.addColorStop(0.6, 'rgba(210, 240, 255, 0.55)');
+    grad.addColorStop(1, 'rgba(190, 230, 255, 0)');
     ctx.fillStyle = grad;
     ctx.beginPath();
-    ctx.arc(16, 16, 15, 0, Math.PI * 2);
+    ctx.arc(16, 16, 5, 0, Math.PI * 2);
     ctx.fill();
 
     const splashTex = new THREE.CanvasTexture(canvas);
 
     const splashMat = new THREE.PointsMaterial({
-      size: 0.6,
+      size: 0.32,
       map: splashTex,
       transparent: true,
-      opacity: 0.55,
+      opacity: 0.70,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
     });
@@ -129,10 +138,10 @@ export class RainSystem {
   private spawnSplash(x: number, z: number) {
     const idx = this.nextSplashIdx;
     this.splashPositions[idx * 3] = x;
-    this.splashPositions[idx * 3 + 1] = 0.03;
+    this.splashPositions[idx * 3 + 1] = 0.02 + Math.random() * 0.03;
     this.splashPositions[idx * 3 + 2] = z;
-    this.splashOpacities[idx] = 0.8;
-    this.splashScales[idx] = 0.2;
+    this.splashOpacities[idx] = 0.85;
+    this.splashVelocitiesY[idx] = 0.45 + Math.random() * 0.55; // leve impulso vertical discreto
 
     this.nextSplashIdx = (this.nextSplashIdx + 1) % this.splashMax;
   }
@@ -153,11 +162,11 @@ export class RainSystem {
     }
     this.group.visible = true;
 
-    // Number of active drops scales with intensity
+    // Quantidade de gotas ativas escala com a intensidade da chuva
     const activeCount = Math.floor(this.dropCount * Math.min(1.0, 0.3 + this.intensity * 0.7));
-    let rippleBudget = Math.floor(4 * this.intensity);
+    let rippleBudget = Math.floor(10 * this.intensity);
     const now = time;
-    const canSpawnRipple = addRipple && (now - this.lastRippleTime > 0.045);
+    const canSpawnRipple = addRipple && (now - this.lastRippleTime > 0.022);
 
     const pos = this.positions;
 
@@ -169,26 +178,26 @@ export class RainSystem {
       let topY = pos[idx + 1] - vel * delta;
       let botY = pos[idx + 4] - vel * delta;
 
-      // Check collision with water plane (Y = 0)
+      // Colisão com o plano da água (Y = 0)
       if (botY <= this.bottomY) {
         const hitX = pos[idx + 3];
         const hitZ = pos[idx + 5];
 
-        // Trigger surface splash particle
-        if (Math.random() < 0.25) {
+        // Disparo de micro-splash discreto na água
+        if (Math.random() < 0.55) {
           this.spawnSplash(hitX, hitZ);
         }
 
-        // Trigger physical ripple simulation on the water surface
-        if (canSpawnRipple && rippleBudget > 0 && Math.random() < 0.35) {
+        // Pequenos círculos de impacto aleatórios na superfície da água
+        if (canSpawnRipple && rippleBudget > 0 && Math.random() < 0.45) {
           this.lastRippleTime = now;
           rippleBudget--;
-          const radius = 0.95;
-          const strength = 0.22 * this.intensity;
+          const radius = 0.22 + Math.random() * 0.28; // pequenos círculos de impacto aleatórios
+          const strength = (0.10 + Math.random() * 0.12) * this.intensity;
           addRipple(hitX, hitZ, radius, strength);
         }
 
-        // Recycle drop back to top with new random position
+        // Recicla a gota de volta ao topo
         const nx = (Math.random() - 0.5) * this.areaWidth;
         const nz = (Math.random() - 0.5) * this.areaHeight;
         botY = this.topY + Math.random() * 4.0;
@@ -209,14 +218,18 @@ export class RainSystem {
 
     this.lineSegments.geometry.attributes.position.needsUpdate = true;
 
-    // Update splash particles
+    // Atualização dos micro-splashes discretos
     const sPos = this.splashPositions;
     for (let s = 0; s < this.splashMax; s++) {
       if (this.splashOpacities[s] > 0) {
-        this.splashOpacities[s] -= delta * 3.5;
-        if (this.splashOpacities[s] <= 0) {
+        // Micro-elevação vertical que sobe suavemente e decai (gravidade leve)
+        sPos[s * 3 + 1] += this.splashVelocitiesY[s] * delta;
+        this.splashVelocitiesY[s] -= 2.8 * delta;
+
+        this.splashOpacities[s] -= delta * 4.8; // rápida dissipação elegante (~0.18s)
+        if (this.splashOpacities[s] <= 0 || sPos[s * 3 + 1] < 0.0) {
           this.splashOpacities[s] = 0;
-          sPos[s * 3 + 1] = -100; // hide
+          sPos[s * 3 + 1] = -100; // esconde
         }
       }
     }

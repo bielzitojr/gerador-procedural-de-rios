@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { PuddleConfig } from '../types';
 
 interface PuddleInstance {
   mesh: THREE.Mesh;
@@ -114,24 +115,42 @@ export class PuddlesSystem {
     riverWidth: number,
     terrainRoughness: number,
     seed: number,
-    getTerrainHeight?: (x: number, z: number) => number
+    getTerrainHeight?: (x: number, z: number) => number,
+    puddleParams?: PuddleConfig
   ) {
     this.dispose();
 
-    // Locais ideais para poças naturais: margens planas do rio e clareiras
-    const puddleConfigs = [
-      { t: 0.18, lateralOffset: riverWidth * 0.5 + 4.2, scaleX: 3.2, scaleZ: 2.4, rot: 0.4 },
-      { t: 0.32, lateralOffset: -(riverWidth * 0.5 + 3.8), scaleX: 2.6, scaleZ: 3.0, rot: -0.6 },
-      { t: 0.48, lateralOffset: riverWidth * 0.5 + 5.5, scaleX: 3.8, scaleZ: 2.8, rot: 1.1 },
-      { t: 0.62, lateralOffset: -(riverWidth * 0.5 + 4.5), scaleX: 2.8, scaleZ: 2.2, rot: -0.3 },
-      { t: 0.78, lateralOffset: riverWidth * 0.5 + 3.5, scaleX: 3.4, scaleZ: 3.2, rot: 0.8 },
-      { t: 0.88, lateralOffset: -(riverWidth * 0.5 + 5.0), scaleX: 2.5, scaleZ: 2.0, rot: -0.9 },
-    ];
+    const actualSeed = puddleParams?.puddleSeed ?? seed;
+    const count = puddleParams?.puddleCount ?? 14;
+    const baseRadius = puddleParams?.puddleRadius ?? 2.8;
+    const rimWidthFactor = puddleParams?.mudRimWidth ?? 0.85;
+
+    // Gerar poças dinamicamente ao longo do relevo e das clareiras
+    const puddleConfigs: { t: number; lateralOffset: number; scaleX: number; scaleZ: number; rot: number }[] = [];
+    for (let i = 0; i < count; i++) {
+      const t = 0.08 + (i / Math.max(1, count - 1)) * 0.84;
+      const pseudoRnd1 = Math.sin(i * 12.9898 + actualSeed * 78.233) * 43758.5453;
+      const rnd1 = pseudoRnd1 - Math.floor(pseudoRnd1);
+      const pseudoRnd2 = Math.sin(i * 39.346 + actualSeed * 11.13) * 43758.5453;
+      const rnd2 = pseudoRnd2 - Math.floor(pseudoRnd2);
+
+      const sideSign = i % 2 === 0 ? 1 : -1;
+      const lateral = sideSign * (riverWidth * 0.5 + 3.0 + rnd1 * 7.5);
+      const rad = baseRadius * (0.65 + rnd2 * 0.7);
+
+      puddleConfigs.push({
+        t,
+        lateralOffset: lateral,
+        scaleX: rad * (0.85 + rnd1 * 0.3),
+        scaleZ: rad * (0.85 + rnd2 * 0.3),
+        rot: rnd1 * Math.PI * 2,
+      });
+    }
 
     const wetMudMaterial = new THREE.MeshStandardMaterial({
       color: 0x483c32, // Terra/lama úmida escura
-      roughness: 0.4,
-      metalness: 0.15,
+      roughness: 0.38,
+      metalness: 0.16,
       flatShading: true,
     });
 

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { SimplexNoise } from '../utils/noise';
 import { RiverConfig } from '../types';
-import { RiverPhysicsManager, RiverPhysicsObject } from '../physics/riverObjectPhysics';
+import { RiverPhysicsManager, RiverPhysicsObject, RiverRockObstacle } from '../physics/riverObjectPhysics';
 
 export interface RiverData {
   terrainMesh: THREE.Mesh;
@@ -12,12 +12,13 @@ export interface RiverData {
   ducks: { group: THREE.Group }[];
   curve: THREE.CatmullRomCurve3;
   getTerrainHeight: (x: number, z: number) => number;
-  getDistanceToRiver: (x: number, z: number) => { distance: number; riverY: number; t: number };
+  getDistanceToRiver: (x: number, z: number) => { distance: number; riverY: number; t: number; signedLateral?: number };
   update: (
     time: number,
     delta: number,
     addRipple?: (x: number, z: number, radius: number, strength: number) => void,
-    addWake?: (x: number, z: number, dirX: number, dirZ: number, speed: number, strength: number, objectId?: number) => void
+    addWake?: (x: number, z: number, dirX: number, dirZ: number, speed: number, strength: number, objectId?: number) => void,
+    clearWake?: (objectId: number) => void
   ) => void;
   dispose: () => void;
 }
@@ -58,10 +59,11 @@ export function generateProceduralRiver(
     curvePoints.push(curve.getPoint(i / sampleSteps));
   }
 
-  function getDistanceToRiver(x: number, z: number): { distance: number; riverY: number; t: number } {
+  function getDistanceToRiver(x: number, z: number): { distance: number; riverY: number; t: number; signedLateral: number } {
     let minSqDist = Infinity;
     let closestY = curvePoints[0].y;
     let closestT = 0;
+    let bestSignedLateral = 0;
 
     for (let i = 0; i < sampleSteps; i++) {
       const p1 = curvePoints[i];
@@ -88,6 +90,8 @@ export function generateProceduralRiver(
         minSqDist = sqDist;
         closestY = p1.y + segT * (p2.y - p1.y);
         closestT = (i + segT) / sampleSteps;
+        const segLen = Math.sqrt(segLenSq);
+        bestSignedLateral = segLen > 0.0001 ? (segX * dz - segZ * dx) / segLen : 0;
       }
     }
 
@@ -95,6 +99,7 @@ export function generateProceduralRiver(
       distance: Math.sqrt(minSqDist),
       riverY: closestY,
       t: closestT,
+      signedLateral: bestSignedLateral,
     };
   }
 
@@ -116,6 +121,17 @@ export function generateProceduralRiver(
   const bankWidth = 4.0;
   const riverTrench = Math.max(1.2, config.depth);
 
+  // Variação orgânica para quebrar a linearidade das margens e leito do rio
+  const getBankVariation = (x: number, z: number): number => {
+    return (noise.noise2D(x * 0.07, z * 0.07) * 0.75 + noise.noise2D(x * 0.18, z * 0.18) * 0.28) * Math.max(0.6, config.terrainRoughness);
+  };
+  const getBedVariation = (x: number, z: number): number => {
+    return (
+      noise.noise2D(x * 0.04 + 15.0, z * 0.04 + 15.0) * 0.45 +
+      noise.noise2D(x * 0.12, z * 0.12) * 0.20
+    );
+  };
+
   const getTerrainHeight = (x: number, z: number): number => {
     const baseElevation = (noise.fbm(x * 0.025, z * 0.025, 4, 0.45) * 4.0 + 1.2) * config.terrainRoughness;
     const smallBumps = noise.noise2D(x * 0.1, z * 0.1) * 0.4;
@@ -125,11 +141,28 @@ export function generateProceduralRiver(
     const dist = riverInfo.distance;
     const waterY = riverInfo.riverY;
 
-    if (dist < halfRiverWidth - 0.6) {
-      const centerFactor = 1.0 - (dist / Math.max(0.1, halfRiverWidth - 0.6));
-      return waterY - (riverTrench * (0.35 + centerFactor * 0.65));
-    } else if (dist < halfRiverWidth + bankWidth) {
-      const bankT = (dist - (halfRiverWidth - 0.6)) / (bankWidth + 0.6);
+    // Distância com meandros orgânicos suaves
+    const effectiveDist = dist + getBankVariation(x, z);
+
+    if (effectiveDist < halfRiverWidth - 0.6) {
+      // Posição lateral normalizada (-1.0 na margem esquerda, 0.0 no centro, +1.0 na margem direita)
+      const normLateral = THREE.MathUtils.clamp(riverInfo.signedLateral / Math.max(0.1, halfRiverWidth - 0.6), -1.0, 1.0);
+
+      // Meandro natural do talvegue (o canal mais profundo oscila lateralmente, acompanhando as curvas)
+      const thalwegOffset = Math.sin(riverInfo.t * 8.0 + config.seed) * 0.45 + noise.noise2D(riverInfo.t * 4.5, config.seed * 0.5) * 0.28;
+
+      // Poços profundos e bancos rasos alternados (pools and riffles)
+      const poolDepthMod = 0.85 + 0.42 * Math.sin(riverInfo.t * 11.0 + 1.2) + 0.22 * noise.noise2D(riverInfo.t * 6.0, 8.4);
+
+      // Proximidade ao canal mais profundo
+      const distToThalweg = Math.abs(normLateral - thalwegOffset);
+      const thalwegFactor = Math.max(0.0, 1.0 - (distToThalweg / 1.35));
+      const smoothThalweg = thalwegFactor * thalwegFactor * (3.0 - 2.0 * thalwegFactor);
+
+      const asymmetricTrench = riverTrench * (0.30 + smoothThalweg * 0.85) * poolDepthMod;
+      return waterY - asymmetricTrench + getBedVariation(x, z);
+    } else if (effectiveDist < halfRiverWidth + bankWidth) {
+      const bankT = (effectiveDist - (halfRiverWidth - 0.6)) / (bankWidth + 0.6);
       const smoothBank = bankT * bankT * (3.0 - 2.0 * bankT);
       const bedEdgeY = waterY - 0.25;
       const bankTopY = Math.max(waterY + 1.4, elevation);
@@ -151,18 +184,24 @@ export function generateProceduralRiver(
     const dist = riverInfo.distance;
     const waterY = riverInfo.riverY;
 
-    // Carve river valley & bed
+    // Carve river valley & bed com margens orgânicas e onduladas
+    const effectiveDist = dist + getBankVariation(vx, vz);
     let finalY = elevation;
     let vColor = grassColor;
 
-    if (dist < halfRiverWidth - 0.6) {
-      // Deep riverbed clearly below waterY
-      const centerFactor = 1.0 - (dist / Math.max(0.1, halfRiverWidth - 0.6));
-      finalY = waterY - (riverTrench * (0.35 + centerFactor * 0.65));
-      vColor = riverbedColor.clone().lerp(sandColor, 0.25);
-    } else if (dist < halfRiverWidth + bankWidth) {
+    if (effectiveDist < halfRiverWidth - 0.6) {
+      const normLateral = THREE.MathUtils.clamp(riverInfo.signedLateral / Math.max(0.1, halfRiverWidth - 0.6), -1.0, 1.0);
+      const thalwegOffset = Math.sin(riverInfo.t * 8.0 + config.seed) * 0.45 + noise.noise2D(riverInfo.t * 4.5, config.seed * 0.5) * 0.28;
+      const poolDepthMod = 0.85 + 0.42 * Math.sin(riverInfo.t * 11.0 + 1.2) + 0.22 * noise.noise2D(riverInfo.t * 6.0, 8.4);
+      const distToThalweg = Math.abs(normLateral - thalwegOffset);
+      const thalwegFactor = Math.max(0.0, 1.0 - (distToThalweg / 1.35));
+      const smoothThalweg = thalwegFactor * thalwegFactor * (3.0 - 2.0 * thalwegFactor);
+
+      finalY = waterY - (riverTrench * (0.30 + smoothThalweg * 0.85) * poolDepthMod) + getBedVariation(vx, vz);
+      vColor = riverbedColor.clone().lerp(sandColor, 0.22 + (1.0 - smoothThalweg) * 0.40);
+    } else if (effectiveDist < halfRiverWidth + bankWidth) {
       // River bank slope rising from below water up to land
-      const bankT = (dist - (halfRiverWidth - 0.6)) / (bankWidth + 0.6);
+      const bankT = (effectiveDist - (halfRiverWidth - 0.6)) / (bankWidth + 0.6);
       const smoothBank = bankT * bankT * (3.0 - 2.0 * bankT); // smoothstep
       const bedEdgeY = waterY - 0.25; // slightly submerged for foam
       const bankTopY = Math.max(waterY + 1.4, elevation);
@@ -205,7 +244,7 @@ export function generateProceduralRiver(
 
   // 3. Generate River Ribbon Mesh following the curve
   const riverSteps = 180;
-  const riverWidthSegs = 24;
+  const riverWidthSegs = 32;
   const riverGeo = new THREE.BufferGeometry();
 
   const rPositions: number[] = [];
@@ -213,7 +252,8 @@ export function generateProceduralRiver(
   const rUvs: number[] = [];
   const rIndices: number[] = [];
 
-  const effectiveRiverWidth = config.riverWidth + 1.2; // slight margin into banks
+  // Margem generosa para penetrar sob as margens do terreno, eliminando qualquer recorte poligonal visível
+  const effectiveRiverWidth = config.riverWidth + 2.8;
 
   for (let i = 0; i <= riverSteps; i++) {
     const t = i / riverSteps;
@@ -270,22 +310,32 @@ export function generateProceduralRiver(
   const rockGeo1 = new THREE.DodecahedronGeometry(1, 1);
   const rockGeo2 = new THREE.IcosahedronGeometry(1, 1);
 
-  // Deform rocks slightly for organic pebble appearance
+  // Deform rocks slightly for organic pebble appearance and add contact occlusion at base
   const deformGeometry = (geo: THREE.BufferGeometry) => {
     const p = geo.attributes.position;
+    const colors = new Float32Array(p.count * 3);
     for (let k = 0; k < p.count; k++) {
       const vx = p.getX(k);
       const vy = p.getY(k);
       const vz = p.getZ(k);
       const d = 1.0 + Math.sin(vx * 3 + vy * 2) * 0.15;
-      p.setXYZ(k, vx * d, vy * (0.6 + Math.cos(vz * 2) * 0.1), vz * d);
+      const finalY = vy * (0.6 + Math.cos(vz * 2) * 0.1);
+      p.setXYZ(k, vx * d, finalY, vz * d);
+
+      // Sombra e oclusão na base da rocha (sensação de peso e pedra molhada junto à linha d'água)
+      const contactShade = THREE.MathUtils.clamp((finalY + 0.35) / 0.85, 0.42, 1.0);
+      colors[k * 3] = contactShade;
+      colors[k * 3 + 1] = contactShade;
+      colors[k * 3 + 2] = contactShade * 0.98;
     }
+    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
     geo.computeVertexNormals();
   };
   deformGeometry(rockGeo1);
   deformGeometry(rockGeo2);
 
   const numRocks = Math.floor(config.rockDensity);
+  const rockObstacles: RiverRockObstacle[] = [];
   for (let r = 0; r < numRocks; r++) {
     const t = 0.08 + (r / numRocks) * 0.84 + (Math.sin(r * 12.3 + config.seed) * 0.04);
     const clampedT = THREE.MathUtils.clamp(t, 0.05, 0.95);
@@ -293,28 +343,39 @@ export function generateProceduralRiver(
     const tangent = curve.getTangent(clampedT).normalize();
     const side = new THREE.Vector3(-tangent.z, 0, tangent.x).normalize();
 
-    // Place rocks partly inside river (causing foam rings!) and along banks
+    // Place rocks partly inside river and along banks
     const lateralFactor = Math.sin(r * 37.1 + config.seed) * 0.9;
     const lateralOffset = lateralFactor * (config.riverWidth * 0.52);
 
     const rockPos = centerPoint.clone().add(side.clone().multiplyScalar(lateralOffset));
     const rockScale = 0.6 + Math.abs(Math.sin(r * 4.9)) * 1.4;
+    const rockY = centerPoint.y + rockScale * 0.35 - 0.2;
 
     const rockMat = new THREE.MeshStandardMaterial({
       color: rockColors[r % rockColors.length],
-      roughness: 0.75,
-      metalness: 0.08,
+      roughness: 0.80,
+      metalness: 0.05,
       flatShading: true,
+      vertexColors: true,
     });
 
     const geo = r % 2 === 0 ? rockGeo1 : rockGeo2;
     const rockMesh = new THREE.Mesh(geo, rockMat);
     rockMesh.scale.set(rockScale, rockScale * 0.85, rockScale * (0.8 + Math.sin(r) * 0.4));
-    rockMesh.position.set(rockPos.x, centerPoint.y + rockScale * 0.35 - 0.2, rockPos.z);
+    rockMesh.position.set(rockPos.x, rockY, rockPos.z);
     rockMesh.rotation.set(r * 0.6, r * 1.2, r * 0.3);
     rockMesh.castShadow = true;
     rockMesh.receiveShadow = true;
     rocksGroup.add(rockMesh);
+
+    // Registra obstáculo físico para colisão real com patos e objetos
+    rockObstacles.push({
+      x: rockPos.x,
+      y: rockY,
+      z: rockPos.z,
+      radius: rockScale * 0.92,
+      height: rockScale * 1.8,
+    });
   }
 
   // Identify rocks in the river current to generate organic ripples across the whole river
@@ -335,6 +396,7 @@ export function generateProceduralRiver(
 
   // 5. Instantiated Physical Objects & Rubber Ducks in the river
   const physicsManager = new RiverPhysicsManager();
+  physicsManager.setObstacles(rockObstacles);
   const duckCount = Math.max(0, config.duckCount); // Se 0, ZERO patinhos!
 
   for (let d = 0; d < duckCount; d++) {
@@ -361,7 +423,8 @@ export function generateProceduralRiver(
     time: number,
     delta: number,
     addRipple?: (x: number, z: number, radius: number, strength: number) => void,
-    addWake?: (x: number, z: number, dirX: number, dirZ: number, speed: number, strength: number, objectId?: number) => void
+    addWake?: (x: number, z: number, dirX: number, dirZ: number, speed: number, strength: number, objectId?: number) => void,
+    clearWake?: (objectId: number) => void
   ) => {
     // 1. Atualizar simulação de física de corpos e fluidos
     physicsManager.update(
@@ -372,7 +435,8 @@ export function generateProceduralRiver(
       getDistanceToRiver,
       getTerrainHeight,
       addRipple,
-      addWake
+      addWake,
+      clearWake
     );
 
     // 2. Subtle natural ripples around rocks in the river current across the whole river

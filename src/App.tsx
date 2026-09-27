@@ -16,6 +16,9 @@ import {
 } from 'lucide-react';
 
 const INITIAL_CONFIG: RiverConfig = {
+  waterMode: 'river',
+
+  // 1. Rio Procedural
   seed: 1337,
   meander: 0.65,
   riverWidth: 8.5,
@@ -24,20 +27,73 @@ const INITIAL_CONFIG: RiverConfig = {
   rockDensity: 16,
   terrainRoughness: 1.1,
   length: 16,
+  duckCount: 2,
+  currentStrength: 1.2,
+
+  // 2. Água Toon & Shader Godot
   paletteId: 'godot_cyan', // Shader original importado da imagem
   foamWidth: 0.42,
   causticScale: 1.7,
   waveHeight: 0.15,
-  duckCount: 2,
-  currentStrength: 1.2,
+  translucency: 0.85,
+  refractionAmount: 0.5,
+  highlightIntensity: 0.90,
+  isCalmWater: false,
+  calmWaterIntensity: 1.0,
+  waveVariant: 'leve',
 
   // Ciclo Dia / Noite & Clima
   timeOfDay: 'day',
   timeHour: 11.5,
   dayNightCycleEnabled: true,
   dayNightSpeed: 0.8,
+
+  // 3. Chuva
   isRaining: false,
   rainIntensity: 1.0,
+  rain: {
+    isRaining: false,
+    rainIntensity: 1.0,
+    dropletCount: 2800,
+    windAngle: 8.0,
+    splashIntensity: 1.0,
+    rippleFrequency: 1.0,
+  },
+
+  // 4. Poças d'água no Terreno
+  puddles: {
+    puddleCount: 14,
+    puddleRadius: 3.2,
+    puddleDepth: 0.65,
+    mudRimWidth: 1.1,
+    puddleSeed: 5555,
+    puddleWetness: 1.2,
+    isCalmWater: true,
+  },
+
+  // 5. Lagos
+  lake: {
+    lakeRadius: 30,
+    lakeDepth: 3.5,
+    lakeIrregularity: 0.75,
+    lakeIslandCount: 1,
+    lakeCalmness: 1.0,
+    lakeRockDensity: 18,
+    lakeSeed: 4242,
+    isCalmWater: true,
+  },
+
+  // 6. Oceanos e Praias (Ondas)
+  ocean: {
+    waveVariant: 'leve',
+    oceanSwellHeight: 1.6,
+    oceanWaveLength: 22,
+    oceanChoppiness: 1.0,
+    oceanSpeed: 1.2,
+    oceanFoamCrests: 0.8,
+    shoreWash: 1.5,
+    oceanSeed: 8888,
+  },
 
   // Propriedades Físicas da Água
   waterDensity: 1.0,
@@ -53,16 +109,40 @@ export default function App() {
   const [showHelp, setShowHelp] = useState(false);
 
   const handleRandomizeSeed = useCallback(() => {
-    setConfig((prev) => ({
-      ...prev,
-      seed: Math.floor(Math.random() * 999999) + 1,
-    }));
+    const newSeed = Math.floor(Math.random() * 999999) + 1;
+    setConfig((prev) => {
+      if (prev.waterMode === 'lake') {
+        return {
+          ...prev,
+          lake: { ...prev.lake, lakeSeed: newSeed },
+        };
+      }
+      if (prev.waterMode === 'ocean') {
+        return {
+          ...prev,
+          ocean: { ...prev.ocean, oceanSeed: newSeed },
+        };
+      }
+      if (prev.waterMode === 'puddles') {
+        return {
+          ...prev,
+          puddles: { ...prev.puddles, puddleSeed: newSeed },
+        };
+      }
+      return {
+        ...prev,
+        seed: newSeed,
+      };
+    });
   }, []);
 
   const handleResetConfig = useCallback(() => {
     setConfig({
       ...INITIAL_CONFIG,
       seed: Math.floor(Math.random() * 999999) + 1,
+      lake: { ...INITIAL_CONFIG.lake, lakeSeed: Math.floor(Math.random() * 999999) + 1 },
+      ocean: { ...INITIAL_CONFIG.ocean, oceanSeed: Math.floor(Math.random() * 999999) + 1 },
+      puddles: { ...INITIAL_CONFIG.puddles, puddleSeed: Math.floor(Math.random() * 999999) + 1 },
     });
   }, []);
 

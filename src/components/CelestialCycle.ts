@@ -16,6 +16,7 @@ export interface CelestialState {
   fogFar: number;
   exposure: number;
   isDaytime: boolean;
+  dayFactor: number;
 }
 
 export class CelestialCycle {
@@ -281,6 +282,7 @@ export class CelestialCycle {
     this.starsMaterial.opacity = starsOpacity;
 
     const sunDir = isDaytime ? sunPos.clone().normalize() : moonPos.clone().normalize();
+    const dayFactor = THREE.MathUtils.clamp((sunElevation + 0.08) / 0.35, 0.0, 1.0);
 
     return {
       timeHour,
@@ -298,6 +300,7 @@ export class CelestialCycle {
       fogFar,
       exposure,
       isDaytime,
+      dayFactor,
     };
   }
 

@@ -2,6 +2,14 @@ import * as THREE from 'three';
 import { PhysicalObjectType, PHYSICAL_OBJECT_DEFS, createPhysicalMesh } from '../components/RiverObjects';
 import { RiverConfig } from '../types';
 
+export interface RiverRockObstacle {
+  x: number;
+  y: number;
+  z: number;
+  radius: number;
+  height: number;
+}
+
 export interface RiverPhysicsObjectTelemetry {
   id: string;
   type: PhysicalObjectType;
@@ -63,6 +71,7 @@ export interface RiverPhysicsObject {
 
 export class RiverPhysicsManager {
   public objects: RiverPhysicsObject[] = [];
+  public obstacles: RiverRockObstacle[] = [];
   public container: THREE.Group = new THREE.Group();
   public debugContainer: THREE.Group = new THREE.Group();
   public showDebug: boolean = false;
@@ -72,6 +81,10 @@ export class RiverPhysicsManager {
     this.container.name = 'PhysicalRiverObjectsGroup';
     this.debugContainer.name = 'PhysicalRiverDebugGroup';
     this.debugContainer.visible = false;
+  }
+
+  public setObstacles(obstacles: RiverRockObstacle[]) {
+    this.obstacles = obstacles;
   }
 
   public setShowDebug(show: boolean) {
@@ -309,7 +322,8 @@ export class RiverPhysicsManager {
     getDistanceToRiver: (x: number, z: number) => { distance: number; riverY: number; t: number },
     getTerrainHeight: (x: number, z: number) => number,
     addRipple?: (x: number, z: number, radius: number, strength: number) => void,
-    addWake?: (x: number, z: number, dirX: number, dirZ: number, speed: number, strength: number, objectId?: number) => void
+    addWake?: (x: number, z: number, dirX: number, dirZ: number, speed: number, strength: number, objectId?: number) => void,
+    clearWake?: (objectId: number) => void
   ) {
     const dt = Math.min(delta, 0.04); // sub-passo estável
     const g = 9.81; // Aceleração da gravidade real (m/s²)
@@ -409,15 +423,30 @@ export class RiverPhysicsManager {
           netAccelZ += toCenter.z * 2.2;
         }
 
-        // Emissão de esteira hidrodinâmica suave ao longo do fluxo
-        if (addWake && obj.vel.length() > 0.25) {
+        // Emissão de esteira hidrodinâmica suave ao longo da trajetória real do objeto
+        if (addWake && obj.vel.length() > 0.18) {
+          const moveSpeed = obj.vel.length();
+          let dirX = obj.vel.x / moveSpeed;
+          let dirZ = obj.vel.z / moveSpeed;
+          // Se a velocidade for muito baixa, misturar suavemente com a tangente do rio
+          if (moveSpeed < 0.4) {
+            const blend = moveSpeed / 0.4;
+            dirX = THREE.MathUtils.lerp(tangent.x, dirX, blend);
+            dirZ = THREE.MathUtils.lerp(tangent.z, dirZ, blend);
+            const len = Math.hypot(dirX, dirZ);
+            if (len > 0.001) {
+              dirX /= len;
+              dirZ /= len;
+            }
+          }
+
           addWake(
             obj.pos.x,
             obj.pos.z,
-            tangent.x,
-            tangent.z,
-            obj.vel.length(),
-            (config.rippleIntensity ?? 1.2) * (obj.radius * 1.5),
+            dirX,
+            dirZ,
+            moveSpeed,
+            (config.rippleIntensity ?? 1.2) * (obj.radius * 1.6),
             obj.wakeId
           );
         }
@@ -436,7 +465,82 @@ export class RiverPhysicsManager {
       obj.pos.y += obj.vel.y * dt;
       obj.pos.z += obj.vel.z * dt;
 
-      // 6. Colisão com o Solo / Leito do Rio:
+      // 6. Colisão FÍSICA com Rochas e Obstáculos no Rio
+      for (let k = 0; k < this.obstacles.length; k++) {
+        const rock = this.obstacles[k];
+        const dx = obj.pos.x - rock.x;
+        const dz = obj.pos.z - rock.z;
+        const minDist = obj.radius + rock.radius;
+
+        // Teste rápido de Bounding Box
+        if (Math.abs(dx) > minDist || Math.abs(dz) > minDist) continue;
+
+        const distSq = dx * dx + dz * dz;
+        if (distSq < minDist * minDist && distSq > 0.00001) {
+          // Checagem de sobreposição vertical Y
+          const objBottom = obj.pos.y - obj.radius;
+          const objTop = obj.pos.y + obj.radius;
+          const rockHalfH = Math.max(0.6, rock.height * 0.55);
+          const rockBottom = rock.y - rockHalfH;
+          const rockTop = rock.y + rockHalfH;
+
+          if (objBottom < rockTop && objTop > rockBottom) {
+            const dist = Math.sqrt(distSq);
+            const nx = dx / dist;
+            const nz = dz / dist;
+            const penetration = minDist - dist;
+
+            // 1. Correção imediata de penetração (empurra o objeto para fora da rocha)
+            obj.pos.x += nx * penetration * 1.02;
+            obj.pos.z += nz * penetration * 1.02;
+
+            // 2. Resolução de velocidade (quique elástico e deflexão na rocha)
+            const vDotN = obj.vel.x * nx + obj.vel.z * nz;
+            if (vDotN < 0) {
+              const restitution = Math.max(0.35, Math.min(0.75, obj.restitution * 1.3));
+              obj.vel.x -= (1.0 + restitution) * vDotN * nx;
+              obj.vel.z -= (1.0 + restitution) * vDotN * nz;
+
+              // Atrito com a superfície áspera da pedra
+              const tangentX = -nz;
+              const tangentZ = nx;
+              const vDotT = obj.vel.x * tangentX + obj.vel.z * tangentZ;
+              obj.vel.x -= tangentX * vDotT * 0.22;
+              obj.vel.z -= tangentZ * vDotT * 0.22;
+
+              // Rotação física e oscilação orgânica do impacto
+              obj.rotVel.y += (vDotT >= 0 ? 1.0 : -1.0) * Math.min(3.5, Math.abs(vDotN) * 2.8);
+              obj.rotVel.x += (Math.random() - 0.5) * 1.6;
+              obj.rotVel.z += (Math.random() - 0.5) * 1.6;
+
+              // Pequena ondulação de impacto na água na borda da rocha
+              if (Math.abs(vDotN) > 0.20 && addRipple) {
+                const impactX = rock.x + nx * (rock.radius * 0.95);
+                const impactZ = rock.z + nz * (rock.radius * 0.95);
+                addRipple(
+                  impactX,
+                  impactZ,
+                  obj.radius * 2.0,
+                  Math.min(2.5, Math.abs(vDotN) * 1.5)
+                );
+              }
+            }
+
+            // 3. Desvio hidrodinâmico (a água do rio contorna naturalmente pedras)
+            // Empurra suavemente o objeto para contornar a rocha ao longo da correnteza
+            const riverTan = curve.getTangent(riverInfo.t).normalize();
+            const cross = riverTan.x * dz - riverTan.z * dx;
+            const divertSign = cross >= 0 ? 1.0 : -1.0;
+            const divertX = -riverTan.z * divertSign;
+            const divertZ = riverTan.x * divertSign;
+            const divertForce = surfaceCurrentSpeed * 0.95 * dt * 14.0;
+            obj.vel.x += divertX * divertForce;
+            obj.vel.z += divertZ * divertForce;
+          }
+        }
+      }
+
+      // 7. Colisão com o Solo / Leito do Rio:
       const groundLimit = terrainY + obj.radius * 0.85;
       if (obj.pos.y < groundLimit) {
         obj.pos.y = groundLimit;
@@ -598,6 +702,74 @@ export class RiverPhysicsManager {
         obj.pos.copy(startPoint).add(startSide.multiplyScalar(lateralJitter));
         obj.pos.y = startPoint.y + 0.15;
         obj.vel.copy(startTan).multiplyScalar(surfaceCurrentSpeed * 0.75);
+
+        // Limpa rastro/esteira imediatamente para não gerar linha contínua através do rio inteiro
+        if (clearWake) {
+          clearWake(obj.wakeId);
+        }
+      }
+    }
+
+    // 12. Colisão Mútua Elástica entre Objetos no Rio (ex: pato com pato, pato com barril)
+    for (let a = 0; a < this.objects.length; a++) {
+      for (let b = a + 1; b < this.objects.length; b++) {
+        const oA = this.objects[a];
+        const oB = this.objects[b];
+        const dx = oB.pos.x - oA.pos.x;
+        const dy = oB.pos.y - oA.pos.y;
+        const dz = oB.pos.z - oA.pos.z;
+        const minDist = oA.radius + oB.radius;
+        const distSq = dx * dx + dy * dy + dz * dz;
+
+        if (distSq < minDist * minDist && distSq > 0.00001) {
+          const dist = Math.sqrt(distSq);
+          const nx = dx / dist;
+          const ny = dy / dist;
+          const nz = dz / dist;
+          const pen = minDist - dist;
+
+          const totalMass = oA.mass + oB.mass;
+          const rA = oB.mass / totalMass;
+          const rB = oA.mass / totalMass;
+
+          oA.pos.x -= nx * pen * rA * 1.01;
+          oA.pos.y -= ny * pen * rA * 0.4;
+          oA.pos.z -= nz * pen * rA * 1.01;
+
+          oB.pos.x += nx * pen * rB * 1.01;
+          oB.pos.y += ny * pen * rB * 0.4;
+          oB.pos.z += nz * pen * rB * 1.01;
+
+          const relVx = oB.vel.x - oA.vel.x;
+          const relVy = oB.vel.y - oA.vel.y;
+          const relVz = oB.vel.z - oA.vel.z;
+          const relVdotN = relVx * nx + relVy * ny + relVz * nz;
+
+          if (relVdotN < 0) {
+            const restitution = (oA.restitution + oB.restitution) * 0.5;
+            const impulse = (-(1.0 + restitution) * relVdotN) / (1.0 / oA.mass + 1.0 / oB.mass);
+
+            oA.vel.x -= (impulse / oA.mass) * nx;
+            oA.vel.y -= (impulse / oA.mass) * ny;
+            oA.vel.z -= (impulse / oA.mass) * nz;
+
+            oB.vel.x += (impulse / oB.mass) * nx;
+            oB.vel.y += (impulse / oB.mass) * ny;
+            oB.vel.z += (impulse / oB.mass) * nz;
+
+            oA.rotVel.y += (Math.random() - 0.5) * 2.0;
+            oB.rotVel.y += (Math.random() - 0.5) * 2.0;
+
+            if (Math.abs(relVdotN) > 0.25 && addRipple) {
+              addRipple(
+                (oA.pos.x + oB.pos.x) * 0.5,
+                (oA.pos.z + oB.pos.z) * 0.5,
+                (oA.radius + oB.radius) * 1.6,
+                Math.min(2.0, Math.abs(relVdotN) * 1.2)
+              );
+            }
+          }
+        }
       }
     }
   }

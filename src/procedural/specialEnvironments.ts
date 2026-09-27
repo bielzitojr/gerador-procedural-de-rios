@@ -1,3 +1,4 @@
+import { createCrystalCavern } from './crystalCavern';
 import { createWaterfallImpact } from './waterfallImpact';
 import { createWaterfallMaterial, createWaterfallGeometry } from './waterfallSurface';
 import * as THREE from 'three';
@@ -26,6 +27,7 @@ export function generateSpecialEnvironment(config: RiverConfig, waterMaterial: T
   const channel = mode === 'underground_river';
   const trench = mode === 'trench';
   const cavern = mode === 'aquatic_cave' || mode === 'grotto' || channel || mode === 'drips';
+  const detailedCave = mode === 'aquatic_cave' || mode === 'grotto';
   const radius = p.scale;
   const height = p.height;
   const random = (i: number) => (Math.sin(i * 127.1 + config.seed * 0.73) * 43758.5453) % 1;
@@ -52,6 +54,8 @@ export function generateSpecialEnvironment(config: RiverConfig, waterMaterial: T
   const waterMesh = new THREE.Mesh(waterGeo, basinMaterial);
   waterMesh.renderOrder = 1;
   const rocksGroup = new THREE.Group();
+  const crystalCave = detailedCave ? createCrystalCavern(config, waterMaterial) : null;
+  if (crystalCave) rocksGroup.add(crystalCave.group);
   const impact = waterfall ? createWaterfallImpact(radius * 0.55, radius, p.density, waterMaterial, height, config.seed) : null;
   if (impact) waterMesh.add(impact.group);
   const materials = new Set<THREE.Material>();
@@ -64,8 +68,8 @@ export function generateSpecialEnvironment(config: RiverConfig, waterMaterial: T
     const mesh = new THREE.Mesh(geo, mat); mesh.position.set(x, y, z); mesh.castShadow = true; mesh.receiveShadow = true; rocksGroup.add(mesh); return mesh;
   };
   // Open-front geological cutaways keep the water and interior visible from orbit.
-  if (cavern) {
-    const count = mode === 'grotto' ? 5 : 9;
+  if (cavern && !detailedCave) {
+    const count = 9;
     for (let i = 0; i < count; i++) {
       const z = (i / (count - 1) - 0.5) * radius * 1.7;
       const span = channel ? radius * 0.64 : radius * (0.65 + 0.2 * unit(i));
@@ -138,6 +142,7 @@ export function generateSpecialEnvironment(config: RiverConfig, waterMaterial: T
   const physicsManager = new RiverPhysicsManager();
   const update: RiverData['update'] = (time, delta, ripple) => {
     impact?.update(time * p.intensity);
+    crystalCave?.update(time);
     // All water surfaces share the original live uniforms updated by RiverCanvas.
     for (const drop of falling) {
       const previous = drop.mesh.position.y;
@@ -148,5 +153,5 @@ export function generateSpecialEnvironment(config: RiverConfig, waterMaterial: T
     }
     physicsManager.update(time, delta, config, curve, getDistanceToRiver, getTerrainHeight, ripple);
   };
-  return { terrainMesh, waterMesh, rocksGroup, objectsGroup: physicsManager.container, physicsManager, ducks: [], curve, getTerrainHeight, getDistanceToRiver, update, dispose: () => { impact?.dispose(); physicsManager.dispose(); terrainGeo.dispose(); terrainMat.dispose(); waterGeo.dispose(); geometries.forEach(g => g.dispose()); materials.forEach(m => m.dispose()); } };
+  return { terrainMesh, waterMesh, rocksGroup, objectsGroup: physicsManager.container, physicsManager, ducks: [], curve, getTerrainHeight, getDistanceToRiver, update, dispose: () => { impact?.dispose(); crystalCave?.dispose(); physicsManager.dispose(); terrainGeo.dispose(); terrainMat.dispose(); waterGeo.dispose(); geometries.forEach(g => g.dispose()); materials.forEach(m => m.dispose()); } };
 }

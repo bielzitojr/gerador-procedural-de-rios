@@ -477,6 +477,12 @@ export const RiverCanvas: React.FC<RiverCanvasProps> = ({
         renderer.toneMappingExposure = currentCelState.exposure;
       }
 
+      const crystalInterior = configRef.current.waterMode === 'aquatic_cave' || configRef.current.waterMode === 'grotto';
+      if (crystalInterior) {
+        scene.background = new THREE.Color('#071b2b');
+        if (scene.fog) { scene.fog.color.set('#0a263b'); (scene.fog as THREE.Fog).near = 35; (scene.fog as THREE.Fog).far = 125; }
+        renderer.toneMappingExposure = 0.95;
+      }
       // NPC com Tocha e Luz Dinâmica caminhando pelo relevo do rio
       let torchData = {
         position: new THREE.Vector3(0, -999, 0),
@@ -604,7 +610,8 @@ export const RiverCanvas: React.FC<RiverCanvasProps> = ({
 
   useEffect(() => {
     if (cameraModeRef.current !== 'first_person' && isSpecialEnvironment(config.waterMode) && cameraRef.current && controlsRef.current) {
-      cameraRef.current.position.set(38, 32, 48);
+      const cave = config.waterMode === 'aquatic_cave' || config.waterMode === 'grotto';
+      cameraRef.current.position.set(cave ? 1 : 38, cave ? config.environment.height * 0.88 : 32, cave ? config.environment.scale * 1.85 : 48);
       controlsRef.current.target.set(0, 4, 0);
       controlsRef.current.update();
     }

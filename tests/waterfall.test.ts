@@ -18,3 +18,11 @@ for (const height of [6, 16, 28]) {
 }
 sheet.dispose(); source.dispose();
 console.log('PASS original shader, shared uniforms, real ripple coordinates, curved geometry');
+const volume = createWaterfallGeometry(12, 16, 22, 1337);
+const points = volume.attributes.position;
+// Opposing faces at mid-fall must retain real thickness, even in profile.
+const front = new THREE.Vector3().fromBufferAttribute(points, 60 * 81 + 20);
+const back = new THREE.Vector3().fromBufferAttribute(points, 60 * 81 + 60);
+assert.ok(front.distanceTo(back) > 1, 'waterfall must have volume, not a single sheet');
+volume.dispose();
+console.log('PASS waterfall side thickness');

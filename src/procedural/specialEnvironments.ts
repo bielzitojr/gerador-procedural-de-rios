@@ -52,7 +52,7 @@ export function generateSpecialEnvironment(config: RiverConfig, waterMaterial: T
   const waterMesh = new THREE.Mesh(waterGeo, basinMaterial);
   waterMesh.renderOrder = 1;
   const rocksGroup = new THREE.Group();
-  const impact = waterfall ? createWaterfallImpact(radius * 0.55, radius, p.density, waterMaterial) : null;
+  const impact = waterfall ? createWaterfallImpact(radius * 0.55, radius, p.density, waterMaterial, height, config.seed) : null;
   if (impact) waterMesh.add(impact.group);
   const materials = new Set<THREE.Material>();
   const geometries = new Set<THREE.BufferGeometry>();

@@ -1,7 +1,9 @@
+import { getWaterfallPath } from './waterfallSurface';
 import * as THREE from 'three';
 /** Soft procedural spray and foam; lit with the generator's existing daylight uniforms. */
-export function createWaterfallImpact(width: number, radius: number, density: number, source: THREE.ShaderMaterial) {
+export function createWaterfallImpact(width: number, radius: number, density: number, source: THREE.ShaderMaterial, height = 16, seed = 1337) {
   const group = new THREE.Group();
+  const edgePath = getWaterfallPath(height, radius);
   const uniforms = { uTime: source.uniforms.uTime, uDayFactor: source.uniforms.uDayFactor };
   const foam = new THREE.ShaderMaterial({uniforms: {...uniforms, uWaveTexture: source.uniforms.uWaveTexture}, transparent:true, depthWrite:false, side:THREE.DoubleSide,
     vertexShader:'varying vec2 vUv; void main(){vUv=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}',
@@ -28,7 +30,16 @@ export function createWaterfallImpact(width: number, radius: number, density: nu
     for(let i=0;i<count;i++){const t=(time*0.55+phases[i])%1; const a=i*2.39996;
       positions[i*3]=Math.sin(i*17.3)*width*0.5+Math.cos(a)*t*2;
       positions[i*3+1]=0.2+Math.sin(t*Math.PI)*(1.2+(i%7)*0.3);
-      positions[i*3+2]=-radius*0.64+2.5+t*(2+i%4);}
+      positions[i*3+2]=-radius*0.64+2.5+t*(2+i%4);
+      if(i%2===0){
+        const flow=0.3+t*0.67, point=edgePath.getPointAt(flow),side=i%4===0?-1:1;
+        const spread=(0.15+phases[(i+7)%count]*1.2)*Math.sin(t*Math.PI);
+        const widthFactor=1+0.045*Math.sin(flow*12+seed)+0.09*flow*flow;
+        positions[i*3]=side*(width*0.5*widthFactor+spread);
+        positions[i*3+1]=point.y+Math.sin(i)*0.2;
+        positions[i*3+2]=point.z+0.35+phases[(i+3)%count]*1.1;
+      }
+    }
     sprayGeo.attributes.position.needsUpdate=true;
     mist.forEach((m,i)=>{const t=(time*0.12+i/14)%1;m.position.set(Math.sin(i*19)*width*0.6+Math.sin(time*0.2+i),0.8+t*3,-radius*0.64+3+t*4);m.scale.setScalar(0.7+t);});
   },dispose(){geo.dispose();foam.dispose();sprayGeo.dispose();sprayMat.dispose();mistGeo.dispose();mistMat.dispose();}};

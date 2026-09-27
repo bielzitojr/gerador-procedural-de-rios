@@ -1,3 +1,4 @@
+import { createWaterfallMaterial, createWaterfallGeometry } from './waterfallSurface';
 import * as THREE from 'three';
 import { RiverConfig, WaterBodyType } from '../types';
 import { RiverData } from './riverMesh';
@@ -46,11 +47,13 @@ export function generateSpecialEnvironment(config: RiverConfig, waterMaterial: T
   terrainMesh.receiveShadow = true;
   const waterGeo = new THREE.PlaneGeometry(100, 100, 80, 80);
   waterGeo.rotateX(-Math.PI / 2);
-  const waterMesh = new THREE.Mesh(waterGeo, waterMaterial);
+  const basinMaterial = waterfall ? createWaterfallMaterial(waterMaterial, false) : waterMaterial;
+  const waterMesh = new THREE.Mesh(waterGeo, basinMaterial);
   waterMesh.renderOrder = 1;
   const rocksGroup = new THREE.Group();
   const materials = new Set<THREE.Material>();
   const geometries = new Set<THREE.BufferGeometry>();
+  if (waterfall) materials.add(basinMaterial);
   const rockMat = new THREE.MeshStandardMaterial({ color: '#647782', roughness: 0.9, flatShading: true });
   materials.add(rockMat);
   const add = (geo: THREE.BufferGeometry, mat: THREE.Material, x: number, y: number, z: number) => {
@@ -98,10 +101,15 @@ export function generateSpecialEnvironment(config: RiverConfig, waterMaterial: T
   const dropGeo = new THREE.SphereGeometry(0.11, 5, 4);
   geometries.add(dropGeo); materials.add(dropMat);
   if (waterfall) {
-    const curtain = new THREE.ShaderMaterial({ transparent: true, side: THREE.DoubleSide, uniforms: { time: { value: 0 }, speed: { value: p.intensity } }, vertexShader: 'varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }', fragmentShader: 'varying vec2 vUv; uniform float time; uniform float speed; void main(){ float streak=sin(vUv.x*180.0+sin(vUv.y*12.0+time)*2.0)*0.5+0.5; float foam=pow(0.5+0.5*sin(vUv.y*65.0+time*speed*9.0),8.0); gl_FragColor=vec4(mix(vec3(0.12,0.7,0.83),vec3(0.9,1.0,1.0),streak*0.5+foam*0.5),0.83); }' });
     const width = radius * 0.55;
-    add(new THREE.PlaneGeometry(width, height, 24, 24), curtain, 0, height / 2, -radius * 0.64);
-    const upper = add(new THREE.PlaneGeometry(width, radius * 0.8), dropMat, 0, height, -radius * 1.04); upper.rotation.x = -Math.PI / 2;
+    const curtain = createWaterfallMaterial(waterMaterial, true);
+    const sheetGeometry = createWaterfallGeometry(width, height, radius, config.seed);
+    materials.add(curtain); geometries.add(sheetGeometry);
+    const sheet = new THREE.Mesh(sheetGeometry, curtain);
+    sheet.name = 'waterfall-original-water';
+    sheet.renderOrder = 2;
+    // Hiding waterMesh for the depth pass also hides the entire waterfall.
+    waterMesh.add(sheet);
     for (let i = 0; i < p.density * 5; i++) {
       const x = (unit(i + 4) - 0.5) * width;
       const z = -radius * 0.64 + unit(i + 500) * 1.5;
@@ -117,8 +125,8 @@ export function generateSpecialEnvironment(config: RiverConfig, waterMaterial: T
   if (mode === 'rainbow' || (waterfall && p.rainbow)) {
     const colors = ['#ef5350','#ffa726','#ffee58','#66bb6a','#26c6da','#5c6bc0','#ab47bc'];
     colors.forEach((color, i) => {
-      const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.48, side: THREE.DoubleSide, depthWrite: false });
-      const arc = add(new THREE.RingGeometry(radius * 0.75 - i * 0.42, radius * 0.75 - i * 0.42 + 0.4, 96, 1, 0, Math.PI), mat, 0, 1, -radius * 0.2);
+      const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.25, side: THREE.DoubleSide, depthWrite: false });
+      const arc = add(new THREE.RingGeometry(radius * 0.58 - i * 0.32, radius * 0.58 - i * 0.32 + 0.4, 96, 1, 0, Math.PI), mat, 0, 1, -radius * 0.2);
       arc.castShadow = false;
     });
   }
@@ -126,12 +134,12 @@ export function generateSpecialEnvironment(config: RiverConfig, waterMaterial: T
   const getDistanceToRiver = (x: number, z: number) => ({ distance: Math.abs(x - centerX(z)), riverY: 0, t: THREE.MathUtils.clamp(z / (radius * 1.4) + 0.5, 0, 1) });
   const physicsManager = new RiverPhysicsManager();
   const update: RiverData['update'] = (time, delta, ripple) => {
-    for (const material of materials) if (material instanceof THREE.ShaderMaterial) material.uniforms.time.value = time;
+    // All water surfaces share the original live uniforms updated by RiverCanvas.
     for (const drop of falling) {
       const previous = drop.mesh.position.y;
       const phase = (time * p.intensity * (waterfall ? 0.65 : 0.24) + drop.phase) % 1;
       drop.mesh.position.y = drop.top * (1 - phase * phase);
-      drop.mesh.scale.set(1, waterfall ? 4 : 2, 1);
+      drop.mesh.scale.setScalar(waterfall ? 0.5 : 1);
       if (drop.mesh.position.y > previous && time > 0.1) ripple?.(drop.x, drop.z, waterfall ? 1.2 : 0.6, 0.35 * p.intensity);
     }
     physicsManager.update(time, delta, config, curve, getDistanceToRiver, getTerrainHeight, ripple);
